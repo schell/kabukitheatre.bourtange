@@ -19,7 +19,19 @@
       (if (not (numberp i))
 	  (return-from parabola nil)))
     ;;calculations for the coefficients A, B, and C
-    (setf b (/ (- y2 y3 (/ (* (- y1 y2) (- (sqr x2) (sqr x3))) (- (sqr x1) (sqr x2)))) (- (+ x2 (/ (* (- x2 x1) (-  (sqr x2) (sqr x3))) (- (sqr x1) (sqr x2)))) x3)))
-    (setf a (/ (- y1 y2 (* b (- x1 x2))) (- (sqr x1) (sqr x2))))
-    (setf c (- y1 (* a (sqr x1)) (* b x1)))
-    (list a b c)))
+    (if (not (or (= x1 x2) (= x1 x3) (= x2 x3)))
+	(progn
+	  (setf b (/ (- y2 y3 (/ (* (- y1 y2) (- (sqr x2) (sqr x3))) (- (sqr x1) (sqr x2)))) (- (+ x2 (/ (* (- x2 x1) (-  (sqr x2) (sqr x3))) (- (sqr x1) (sqr x2)))) x3)))
+	  (setf a (/ (- y1 y2 (* b (- x1 x2))) (- (sqr x1) (sqr x2))))
+	  (setf c (- y1 (* a (sqr x1)) (* b x1)))
+	  (list a b c))
+	(progn
+	  (if (= x1 x2)
+	      (setf x2 (+ x2 1)))
+	  (if (= x1 x3)
+	      (setf x3 (+ x3 1)))
+	  (if (= x2 x3)
+	      (setf x3 (+ x3 1)))
+	  (parabola (list x1 y1) (list x2 y2) (list x3 y3))))))
+	
+	
