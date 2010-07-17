@@ -1,5 +1,5 @@
 float x,y;
-	float radius = 0.5f;
+float radius = 0.5f;
 	glBegin(GL_LINES);
 		glColor3f(0.0f,0.0f,0.0f);
 		
