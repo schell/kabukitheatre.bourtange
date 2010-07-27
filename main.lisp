@@ -5,7 +5,11 @@
 ;--------------------------------------
 ;  Dependencies
 ;--------------------------------------
-(load "loadopengl.lisp")
+(require 'asdf)
+(require 'asdf-install)
+(asdf:load-system :cl-opengl) 
+(asdf:load-system :cl-glu)    
+(asdf:load-system :cl-glut)		
 ;--------------------------------------
 ;  Some utility functions
 ;--------------------------------------
@@ -207,6 +211,8 @@
    (outline :initarg :outline :initform (make-arc 10 0 *tau* 16) :accessor outline)
    (outline-color :initarg :outline-color :initform (make-color 1 1 1 1) :accessor outline-color)
    (explode-radius :initform 50 :accessor explode-radius)))
+(defun make-unit (radius color outline-color &optional (unit-type 'unit))
+  (make-instance unit-type :radius radius :vertices (make-circle radius) :outline (make-arc radius 0 *tau*) :color color :outline-color outline-color))
 (defmethod draw ((object unit))
   (call-next-method)
   (let* ((color (outline-color object))
@@ -229,6 +235,20 @@
   (setf (outline object) 
     (setf (vertices object) 
       (make-circle (setf (radius object) radius)))))
+      
+(defun update-unit (unit &optional &key life radius points velocity acceleration origin color outline-color)
+  "Updates the values of a unit"
+  (if life (setf (life unit) life))
+  (if radius (progn
+    (setf (radius unit) radius)
+    (setf (vertices unit) (make-circle radius (if points points 32)))
+    (setf (outline unit) (make-arc radius 0 (life unit)))))
+  (if velocity (setf (velocity unit) velocity))
+  (if acceleration (setf (acceleration unit) acceleration))
+  (if origin (setf (origin unit) origin))
+  (if color (setf (color unit) color))
+  (if outline-color (setf (outline-color unit) outline-color))
+  unit)
   
 (defclass baddy (unit) 
   ((damage :initarg :damage :initform (/ 1 100) :accessor damage))
@@ -237,15 +257,27 @@
    :outline-color (make-color (/ 251 255) (/ 38 255) 0)
    :outline (make-arc 10 0 *tau* 32)
    :vertices (make-circle 10 32)))
-   
+
+; coreblast is the main weapon, it sends out a shock wave
+(defclass core-blast (unit)
+  ((expansion-rate :initarg :expansion-rate :initform 1 :accessor expansion-rate)))
+(defun make-core-blast (radius)
+  (make-unit radius (make-color 1 1 1 0.3) (make-color (/ 92 255) (/ 221 255) (/ 238 255) 1) 'core-blast))
+(defmethod draw ((object core-blast))
+  (call-next-method))
+  
 (defclass core (unit)
-  ()
+  ((blast :initarg :blast :initform (make-core-blast 50) :accessor blast))
   (:default-initargs :radius 50
    :color (make-color (/ 231 255) (/ 250 255) (/ 216 255))
    :outline-color (make-color (/ 188 255) (/ 238 255) (/ 92 255))))
 (defun make-core (radius)
   (make-instance 'core :radius radius :outline (make-arc radius 0 *tau*)
-   :vertices (make-circle (- radius 3))))
+   :vertices (make-circle (- radius 3))
+   :blast (make-core-blast radius)))
+(defmethod draw ((object core))
+  (draw (blast object))
+  (call-next-method))
   
 (defun create-random-baddies (number inner-radius add-to-radius &optional (baddy-type 'baddy))
  "Creates 'number baddies to converge upon bourtange and collects them..."
@@ -266,6 +298,10 @@
    (baddies :initform (create-random-baddies 300 300 400) :accessor baddies)
    (collided-baddies :initform () :accessor collided-baddies)
    (dying-baddies :initform () :accessor dying-baddies)))
+(defmethod draw ((object program))
+  (draw-list (dying-baddies object))
+  (draw-list (baddies object))
+  (draw (player-core object)))
    
 (defgeneric millis-since-last-tick (p)
   (:documentation "The number of milliseconds since the last set tick"))
@@ -289,19 +325,23 @@
 	
 (defun draw-display ()
   "Called every frame to draw things - this is our main game loop"
-  (gl:line-width 1) 
+  ; update time
+  (setf (last-tick-time *program*) (millitime))
   (apply-all-list (baddies *program*))
-  (setf (collided-baddies *program*) (find-collided-baddies (baddies *program*) (player-core *program*)))
-  (dolist (baddy (collided-baddies *program*))
-    (let* ((pc (player-core *program*))
-     (damage (damage baddy)))
-      (decrement-life pc damage)
-      (setf (baddies *program*) (delete baddy (baddies *program*)))))
-  (setf (dying-baddies *program*) 
-   (explode-baddies (append (collided-baddies *program*) (dying-baddies *program*))))
-  (draw-list (dying-baddies *program*))
-  (draw-list (baddies *program*))
-  (draw (player-core *program*)))
+  ; core-blast stuff
+  (let* ((pc (player-core *program*))
+   (baddies (baddies *program*)))
+    (setf (collided-baddies *program*) (find-collided-baddies baddies pc))
+    (dolist (baddy (collided-baddies *program*))
+      ; baddies that hit the core turn white
+      (update-unit baddy :color (make-color 1 1 1 1))
+      (let* ((damage (damage baddy)))
+        (decrement-life pc damage)
+        (setf baddies (delete baddy baddies))))
+    (setf (dying-baddies *program*) 
+     (explode-baddies (append (collided-baddies *program*) (dying-baddies *program*)))))
+  ; draw it out
+  (draw *program*))
 ;--------------------------------------
 ;  Gl/Glut stuff
 ;--------------------------------------
@@ -315,6 +355,7 @@
    :tick-interval (round 1000 60)))  ; milliseconds per tick
 
 (defmethod glut:display-window :before ((win my-window))
+  (gl:line-width 1) 
   (gl:shade-model :smooth)        
   (gl:clear-color 0 0 0 0)  
   (gl:enable :blend)
@@ -363,8 +404,6 @@
   (setf (mouse-y *program*) y))
 
 (defmethod glut:tick ((win my-window))
-  ; update time
-  (setf (last-tick-time *program*) (millitime))
   (glut:post-redisplay))        ; tell GLUT to redraw
 ;--------------------------------------
 ;  Setup and go
