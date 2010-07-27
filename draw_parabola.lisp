@@ -1,26 +1,24 @@
 (load "loadopengl.lisp")
-
 ;;Just a quicky to clean up squaring.
 (defun sqr (x)
   (* x x))
 
 ;;Input of 3 binomial pairs, outputs the coefficients A,B, and C for y = Ax^2 + Bx +c, the parabola through the three inputted points.
-(defun parabola (xy1 xy2 xy3);defines function, name, and arguments
-  (if (not (and (listp xy1) (listp xy2) (listp xy3)));checks to make sure each argument is a list, returns nil otherwise
+(defun parabola (xy1 xy2 xy3)
+  (if (not (and (listp xy1) (listp xy2) (listp xy3)))
       (return-from parabola nil))
-  (if (not (and (= (length xy1) 2) (= (length xy2) 2) (= (length xy3))));checks to make sure each argument list has 2 elements, returns nil otherwise
+  (if (not (and (= (length xy1) 2) (= (length xy2) 2) (= (length xy3))))
       (return-from parabola nil))
-  (let (a b c x1 y1 x2 y2 x3 y3);let declares local vars only available to this function
-    (setf x1 (elt xy1 0));sets local variables to the x and y values of each of the arguments
+  (let (a b c x1 y1 x2 y2 x3 y3)
+    (setf x1 (elt xy1 0))
     (setf y1 (elt xy1 1))
     (setf x2 (elt xy2 0))
     (setf y2 (elt xy2 1))
     (setf x3 (elt xy3 0))
     (setf y3 (elt xy3 1))
-    (dolist (i (list x1 x2 x3 y1 y2 y3));checks to make sure all x's and y's are numbers, returns nil otherwise
+    (dolist (i (list x1 x2 x3 y1 y2 y3))
       (if (not (numberp i))
 	  (return-from parabola nil)))
-    ;;calculations for the coefficients A, B, and C
     (if (not (or (= x1 x2) (= x1 x3) (= x2 x3)))
 	(progn
 	  (setf b (/ (- y2 y3 (/ (* (- y1 y2) (- (sqr x2) (sqr x3))) (- (sqr x1) (sqr x2)))) (- (+ x2 (/ (* (- x2 x1) (-  (sqr x2) (sqr x3))) (- (sqr x1) (sqr x2)))) x3)))
@@ -42,10 +40,14 @@
 (defparameter *gunfire-list* (list ))
 (defparameter *missile-list* (list ))
 (defparameter *missile-speed* 30)
-(defparameter *gunfire-speed* 60)
+(defparameter *missile-size* 10)
+(defparameter *gunfire-speed* 30)
 (defparameter *gunfire-rate* 100)
 (defparameter *gunfiring* nil)
 (defparameter *gunfire-coords* (list 0 0))
+(defparameter *gunfire-count* 0)
+(defparameter *gunfire-dmg* 20)
+(defparameter *gunfire-knockback* 5)
 (defparameter *exiting* nil)
 (defparameter *missile-mag* 10)
 (defparameter *missile-max* 10)
@@ -357,7 +359,7 @@
 					  (make-genobj 401 6 0 0 0 (circle 401 6 5 8) (list 0 1 1) :line-loop)))
 
 (defun create-missile (path1)
-  (setf *missile-list* (append *missile-list* (list (list *missile-count* (make-missile (/ *width* 2) 0 0 0 1 path1 (star5 (/ *width* 2) 0 10) (list 1 0 0) :line-loop)))))
+  (setf *missile-list* (append *missile-list* (list (list *missile-count* (make-missile (/ *width* 2) 0 0 0 1 path1 (star5 (/ *width* 2) 0 *missile-size*) (list 1 0 0) :line-loop)))))
   (setf *missile-count* (+ *missile-count* 1))
   nil)
 
@@ -369,17 +371,23 @@
     (setf angle1 (angle-between-2pts (list (/ *width* 2) 0) (list x1 y1)))
     (setf xv1 (* vel (cos angle1)))
     (setf yv1 (* vel (sin angle1)))
-    (setf *gunfire-list* (append *gunfire-list* (list (make-genobj (/ *width* 2) 0 xv1 yv1 rotv1 (list (list (/ *width* 2) 0) (list (+ (/ *width* 2) (* l (cos angle1))) (* l (sin angle1)))) (list 1 1 1) :line-strip))))))
+    (setf *gunfire-list* (append *gunfire-list* (list (list *gunfire-count* (make-genobj (/ *width* 2) 0 xv1 yv1 rotv1 (list (list (/ *width* 2) 0) (list (+ (/ *width* 2) (* l (cos angle1))) (* l (sin angle1)))) (list 1 1 1) :line-strip)))))
+    (setf *gunfire-count* (+ *gunfire-count* 1))))
 
 (defun create-convex-meteor-obj (x1 y1 xv1 yv1 rotv1 r n)
   (setf *object-list* (append *object-list* (list (make-genobj x1 y1 xv1 yv1 rotv1 (convex-meteor x1 y1 r n) (list 1 1 1) :line-loop)))))
 
-(defun physics ()
-  (dotimes (i (length *object-list*))
-    (if (not (= (rotv (elt *object-list* i)) 0))
-	(rotate-genobj-by (elt *object-list* i) (rotv (elt *object-list* i))))
-    (if (not (and (= (xvel (elt *object-list* i)) 0) (= (yvel (elt *object-list* i)) 0)))
-	(move-genobj-by (elt *object-list* i) (xvel (elt *object-list* i)) (yvel (elt *object-list* i))))))
+(defun create-explosion-obj (x1 y1 r n)
+  (setf *explosion-list* (append *explosion-list* (list 0 (make-genobj x1 y1 0 0 (random-between -0.1 0.1) (circle x1 y1 r n) (list 1 1 1) :points)))))
+
+;(defun advance-explosions ()
+;  (let ((remove-list nil))
+;    (dotimes (i (length *explosion-list*))
+;      (setf (elt (elt *explosion-list* i) 0) (+ (elt (elt *explosion-list* i)) 1))
+;      (if (= (elt (elt *explosion-list* i) ) 4)
+;	  (setf remove-list (append remove-list (list i)))
+;	  (setf (objpoints 
+
 
 (defun draw-object-list ()
   (dotimes (i (length *object-list*))
@@ -392,7 +400,7 @@
 
 (defun draw-gunfire-list ()
   (dotimes (i (length *gunfire-list*))
-    (draw-genobj (elt *gunfire-list* i))))
+    (draw-genobj (elt (elt *gunfire-list* i) 1))))
 
 (defun draw-missile-mag ()
   (dotimes (i *missile-mag*)
@@ -487,7 +495,7 @@
     (setf *object-list* (remove-ns-from-list *object-list* objects-to-remove))))
 
 (defun collision-detection ()
-  (let ((missile-collisions nil) (meteor-collisions nil) (moon-base-collisions nil))
+  (let ((missile-collisions nil) (meteor-collisions nil) (moon-base-collisions nil) (gunfire-collisions nil) (gunfire-meteor-collisions nil))
     (dotimes (i (length *object-list*))
       (if (<= (distance (coords (elt *object-list* i)) (list (/ *width* 2) 25)) 50)
 	  (if (collision-test *moon-base* (elt *object-list* i))
@@ -500,9 +508,15 @@
 	    (if (collision-test (elt (elt *missile-list* j) 1) (elt *object-list* i))
 		(progn
 		  (setf missile-collisions (append missile-collisions (list (elt (elt *missile-list* j) 0))))
-		  (setf meteor-collisions (append meteor-collisions (list i))))))))
+		  (setf meteor-collisions (append meteor-collisions (list i)))))))
+      (dotimes (k (length *gunfire-list*))
+	(if (<= (distance (coords (elt (elt *gunfire-list* k) 1)) (coords (elt *object-list* i))) 50)
+	    (if (collision-test (elt (elt *gunfire-list* k) 1) (elt *object-list* i))
+		(progn
+		  (setf gunfire-collisions (append gunfire-collisions (list (elt (elt *gunfire-list* k) 0))))
+		  (setf gunfire-meteor-collisions (append gunfire-meteor-collisions (list i))))))))
     (remove-duplicates moon-base-collisions :test #'=)
-    (list meteor-collisions missile-collisions moon-base-collisions)))
+    (list meteor-collisions missile-collisions moon-base-collisions gunfire-collisions gunfire-meteor-collisions)))
 
 (defun remove-n-from-list (listo n)
   (let ((temp-list nil))
@@ -520,6 +534,18 @@
 (defun remove-missiles (remove-list)
   (dotimes (i (length remove-list))
     (setf *missile-list* (remove-if #'(lambda (x) (= (elt x 0) (elt remove-list i))) *missile-list*))))
+
+(defun remove-gunfire (remove-list)
+  (dotimes (i (length remove-list))
+    (setf *gunfire-list* (remove-if #'(lambda (x) (= (elt x 0) (elt remove-list i))) *gunfire-list*))))
+
+(defun physics ()
+  (dotimes (i (length *object-list*))
+    (if (not (= (rotv (elt *object-list* i)) 0))
+	(rotate-genobj-by (elt *object-list* i) (rotv (elt *object-list* i))))
+    (if (not (and (= (xvel (elt *object-list* i)) 0) (= (yvel (elt *object-list* i)) 0)))
+	(move-genobj-by (elt *object-list* i) (xvel (elt *object-list* i)) (yvel (elt *object-list* i))))))
+
     
 
 (defun collision-physics ()
@@ -530,7 +556,13 @@
     (dotimes (j (length (elt collisions 2)))
       (setf *moon-base-hp* (- *moon-base-hp* (objarea (elt *object-list* (elt (elt collisions 2) j)))))
       (setf (objarea (elt *object-list* (elt (elt collisions 2) j))) -1))
+    (dotimes (k (length (elt collisions 4)))
+      (setf (xvel (elt *object-list* (elt (elt collisions 4) k))) (* (xvel (elt *object-list* (elt (elt collisions 4) k))) *gunfire-knockback*))
+      (setf (yvel (elt *object-list* (elt (elt collisions 4) k))) (* (yvel (elt *object-list* (elt (elt collisions 4) k))) *gunfire-knockback*))
+      (damage-obj (elt *object-list* (elt (elt collisions 4) k)) *gunfire-dmg*))
     (remove-damaged-objs)
+    (if (not (= (length (elt collisions 3)) 0))
+	(remove-gunfire (elt collisions 3)))
     (if (not (= (length (elt collisions 1)) 0))
 	(remove-missiles (elt collisions 1)))))
 	
@@ -541,6 +573,16 @@
 		 :defing-points (list xy1 xy2 xy3)))
 
 (defparameter *the-parabola* (make-parabola (list 0 (/ *width* 2)) '(2 5) '(3 8) 10 (/ *width* 2) 10))
+
+(defun point-onscreenp (point)
+  (if (and (>= (elt point 0) 0) (<= (elt point 0) *width*) (>= (elt point 1) 0) (<= (elt point 1) *height*))
+      t
+      nil))
+
+(defun points-onscreenp (point-list)
+  (dotimes (i (length point-list))
+    (if (point-onscreenp (elt point-list i))
+	(return-from points-onscreenp t))))
 
 (defun move-missiles (n)
   (let ((remove-list nil))
@@ -557,14 +599,21 @@
 		  (progn
 		    (move-genobj-to (elt (elt *missile-list* j) 1) (elt (elt missile-path i) 1) (elt (elt missile-path i) 0))
 		    (return nil))))
-	  (if (> (ycoord (elt (elt *missile-list* j) 1)) (+ *height* 10))
+	   
+	  (if (or (> (ycoord (elt (elt *missile-list* j) 1)) (+ *height* 10)) 
+		  (and (not (point-onscreenp current-position)) (not (points-onscreenp (last missile-path (- (length missile-path) i))))))
 	     (setf remove-list (append remove-list (list (elt (elt *missile-list* j) 0))))))))
     (remove-missiles remove-list))
   nil)
 
 (defun move-gunfire ()
+  (let ((remove-list nil))
   (dotimes (i (length *gunfire-list*))
-    (move-genobj-by (elt *gunfire-list* i) (xvel (elt *gunfire-list* i)) (yvel (elt *gunfire-list* i)))))
+    (move-genobj-by (elt (elt *gunfire-list* i) 1) (xvel (elt (elt *gunfire-list* i) 1)) (yvel (elt (elt *gunfire-list* i) 1)))
+    (if (not (point-onscreenp (coords (elt (elt *gunfire-list* i) 1))))
+	(setf remove-list (append remove-list (list (elt (elt *gunfire-list* i) 0))))))
+  (remove-gunfire remove-list)))
+	
 
 (defmethod change-point ((pobj paraobj) point x1 y1)
   (let ((new-def-points (para-def-points pobj)))
@@ -587,7 +636,7 @@
     (setf angle (angle-between-2pts start finish))
     (setf xvel1 (* (cos angle) speed))
     (setf yvel1 (* (sin angle) speed))
-    (create-convex-meteor-obj (elt start 0) (elt start 1) xvel1 yvel1 (random-between -0.2 0.2) (random-between (/ size 2) (* size 2)) (random-between 5 10))))
+    (create-convex-meteor-obj (elt start 0) (elt start 1) xvel1 yvel1 (random-between -0.2 0.2) (random-between (/ size 2) (* size 2)) (round (random-between 5 10)))))
  
 (defun make-it-rain (n size speed)
   (dotimes (i n)
@@ -600,14 +649,12 @@
                      :mode '(:double :rgb :depth) :title "bourtange.lisp"))
 
 (defmethod glut:display-window :before ((w my-window))
-  (if (not *exiting*)
-      (progn
-	(glut:timer-func 30 (cffi:callback update) 0)
+ 	(glut:timer-func 30 (cffi:callback update) 0)
 	(glut:timer-func *missile-refresh-rate* (cffi:callback reload) 0)
 	(glut:timer-func *rain-frequency* (cffi:callback raining) 0)
 	(glut:timer-func *gunfire-rate* (cffi:callback gunfiring) 0)
 	(gl:clear-color 0 0 0 0)
-	(gl:shade-model :smooth))))
+	(gl:shade-model :smooth))
 
 (defmethod glut:display ((w my-window))
   (draw-object-list)
@@ -690,15 +737,31 @@
   (defparameter *the-parabola* (make-parabola (list 0 (/ *width* 2)) '(2 5) '(3 8) 10 (/ *width* 2) 10))
   (defparameter *object-list* (list ))
   (defparameter *missile-list* nil)
-  (defparameter *gunfire-list* nil)
   (defparameter *missile-count* 0)
   (defparameter *missile-mag* 10)
-  (defparameter *moon-base-hp* 5000)
+  (defparameter *missile-max* 10)
+  (defparameter *missile-refresh-rate* 500)
   (defparameter *missile-speed* 30)
-  (defparameter *gunfire-speed* 50)
+  (defparameter *missile-dmg* 600)
+  (defparameter *missile-size* 15)
+  (defparameter *gunfire-list* nil)
+  (defparameter *gunfire-speed* 30)
+  (defparameter *gunfire-dmg* 40)
+  (defparameter *gunfire-knockback* 0.975)
   (defparameter *gunfire-rate* 100)
   (defparameter *gunfiring* nil)
   (defparameter *gunfire-coords* (list 0 0))
+  (defparameter *gunfire-count* 0)
+  (defparameter *explosion-list* nil)
+  (defparameter *height* 500)
+  (defparameter *width* 800)
+  (defparameter *exiting* nil)
+  (defparameter *rain-frequency* 2500)
+  (defparameter *rain-number* 1)
+  (defparameter *rain-size* 10)
+  (defparameter *rain-speed* 4)
+  (defparameter *moon-base-hp* 5000)
+  (defparameter *moon-base-hp-max* 5000)
   (glut:display-window (make-instance 'my-window)))
 
 (cffi:defcallback update :void ((value :int))
@@ -739,8 +802,4 @@
 	    (create-gunfire-obj (elt *gunfire-coords* 0) (- *height* (elt *gunfire-coords* 1)) *gunfire-speed* 0 6))
 	(glut:timer-func *gunfire-rate* (cffi:callback gunfiring) 0))))
 
-  
-
-  
-     
-  
+(rb-smooth)

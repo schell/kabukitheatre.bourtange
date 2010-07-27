@@ -1,6 +1,5 @@
 ; Bourtange - a fort defense game
 ; Schell Scivally
-; Aaron Maus 
 ; Sat Jul  3 11:31:06 PDT 2010
 ;--------------------------------------
 ;  Dependencies
@@ -18,6 +17,10 @@
   (* (get-internal-real-time) (/ 1000 internal-time-units-per-second)))
 (defgeneric multiply (x y)
   (:documentation "Multiplies two things together."))
+(defun filter (a b)
+  "Filters out all items in a from b"
+  (if (= 0 (length a)) b
+    (filter (remove (first a) a) (remove (first a) b))))
 ;--------------------------------------
 ;  Game definitions
 ;--------------------------------------
@@ -29,7 +32,7 @@
 (defclass point ()
   ((x :initarg :x :initform 0 :accessor x)
    (y :initarg :y :initform 0 :accessor y)))
-(defun make-point (x y)
+(defun make-point (&optional (x 0) (y 0))
   "Utility function. Creates a point at (x, y)"
   (make-instance 'point :x x :y y))
 (defmethod multiply ((p point) s)
@@ -58,22 +61,22 @@
    (make-point -hw -hw)
    (make-point -hw hw))))
    
-(defun make-circle (radius &optional (points 360)) 
+(defun make-circle (&optional (radius 1) (points 360)) 
   "Utility function. Creates a circle of 'points points"
   (loop for x from 1 to points collect (multiply (rad->xy (* x (/ *tau* points))) radius)))
   
-(defun make-arc (radius &optional (start-radian 0) (end-radian *tau*) (points 360))
+(defun make-arc (&optional (radius 1) (start-radian 0) (end-radian *tau*) (points 360))
   "Utility function. Creates an arc"
   (cons (multiply (rad->xy start-radian) radius)
     (loop for x from 2 to points collect 
       (multiply (rad->xy (+ start-radian (* x (/ (- end-radian start-radian) points)))) radius))))
-      
-(defun make-ring (radius inner-radius &optional (start-radian 0) (end-radian *tau*) (points 360))
-  "Utility function. Creates an arched ring"
-  (let* ((outer (make-arc radius start-radian end-radian points))
-   (inner (make-arc inner-radius start-radian end-radian points)))
-    (append outer (reverse inner) (list (first outer)))))
-    
+;       
+; (defun make-ring (&optional (inner-radius 0.5) (radius 1) (start-radian 0) (end-radian *tau*) (points 360))
+;   "Utility function. Creates an arched ring, inner radius is always 1"
+;   (let* ((outer (make-arc radius start-radian end-radian points))
+;    (inner (make-arc 1 start-radian end-radian points)))
+;     (append outer (reverse inner) (list (first outer)))))
+;     
 (defclass color ()
   ((r :initarg :r :initform 1 :accessor r)
    (b :initarg :b :initform 1 :accessor b)
@@ -83,9 +86,9 @@
   "Utility function. Creates a color rbg"
   (make-instance 'color :r r :b b :g g :a a))
   
-(defun draw-point-list (points &optional (primitive :polygon) (r 1) (b 1) (g 1) (a 1))
+(defun draw-point-list (points &optional (primitive :polygon) (color (make-color 1 1 1 1)))
   "Utility function for drawing a list of points."
-  (gl:color r b g a)
+  (gl:color (r color) (b color) (g color) (a color))
   (gl:with-primitive primitive
     (dolist (point points)
       (gl:vertex (x point) (y point) 0)))
@@ -96,7 +99,7 @@
     (add (nth x points) p)))
    
 (defclass display-object ()
-  ((origin :initarg :origin :initform (make-point 0 0) :accessor origin)
+  ((origin :initarg :origin :initform (make-point) :accessor origin)
    (color :initarg :color :initform (make-color 1 1 1 1) :accessor color)
    (primitive :initarg :primitive :initform :polygon :accessor primitive
     :documentation "The opengl primitive to draw this object with")
@@ -104,26 +107,10 @@
 (defgeneric initialize (object)
   (:documentation "Initializes a display-object"))
 (defmethod initialize ((object display-object))
-  (setf (origin object) (make-point 0 0))
-  (setf (vertices object) (list (make-point 0 0))))
+  (setf (origin object) (make-point))
+  (setf (vertices object) (list (make-point))))
 (defgeneric draw (object)
   (:documentation "Draws the display-object with OpenGL"))
-(defmethod draw ((object display-object))
-  (let* ((color (color object)) 
-   (r (r color)) 
-   (g (g color)) 
-   (b (b color))
-   (a (a color))
-   (origin (origin object))
-   (ox (x origin))
-   (oy (y origin))
-   (vertices (vertices object))
-   (primitive (primitive object)))
-    (gl:color r b g a)
-    (gl:with-primitive primitive
-      (dolist (vertex vertices)
-        (gl:vertex (+ ox (x vertex)) (+ oy (y vertex)) 0)))
-    (gl:flush)))
 (defgeneric set-origin (object coords)
   (:documentation "Sets the origin of the object and returns the object"))
 (defmethod set-origin ((object display-object) (coords point))
@@ -138,30 +125,51 @@
 
 (defclass display-circle (display-object)
   ((radius :initarg :radius :initform 10 :accessor radius))
-  (:default-initargs :vertices (make-circle 10)))
+  (:default-initargs :vertices (make-circle)))
 (defun make-display-circle (radius &optional (color (make-color 1 1 1 1)))
   "Utility function that creates a new circle of radius 'radius and color 'color"
-  (make-instance 'display-circle :radius radius :vertices (make-circle radius) :color color))
+  (make-instance 'display-circle :radius radius :vertices (make-circle) :color color))
+(defmethod draw ((object display-circle))
+  (let* ((color (color object)) 
+   (scale (radius object))
+   (r (r color)) 
+   (g (g color)) 
+   (b (b color))
+   (a (a color))
+   (origin (origin object))
+   (ox (x origin))
+   (oy (y origin))
+   (vertices (vertices object))
+   (primitive (primitive object)))
+    (gl:color r b g a)
+    (gl:matrix-mode :modelview)
+    (gl:load-identity)
+    (gl:translate ox oy 0)
+    (gl:scale scale scale 1)
+    (gl:with-primitive primitive
+      (dolist (vertex vertices)
+        (gl:vertex (x vertex) (y vertex) 0)))
+    (gl:flush))
+    (gl:load-identity))
 (defmethod check-collision ((o1 display-circle) (o2 display-circle))
   (< (distance (origin o1) (origin o2)) (+ (radius o1) (radius o2))))
   
 (defclass display-arc (display-circle)
-  ((inner-radius :initarg :inner-radius :initform 5 :accessor inner-radius)
-   (start-radian :initarg :start-radian :initform 0 :accessor start-radian)
+  ((start-radian :initarg :start-radian :initform 0 :accessor start-radian)
    (end-radian :initarg :end-radian :initform *tau* :accessor end-radian))
-  (:default-initargs :vertices (make-arc 10 5)))
-(defun make-display-arc (radius inner-radius &optional (start-radian 0) (end-radian *tau*) (color (make-color 1 1 1 1)))
+  (:default-initargs :vertices (make-arc)))
+(defun make-display-arc (radius &optional (start-radian 0) (end-radian *tau*) (color (make-color 1 1 1 1)))
   "Utility function to create an arc"
   (make-instance 'display-arc 
-   :radius radius :inner-radius inner-radius 
+   :radius radius 
    :start-radian start-radian :end-radian end-radian
    :color color
-   :vertices (make-arc radius start-radian end-radian 4)))
+   :vertices (make-arc radius start-radian end-radian)))
    
 (defclass physical-object ()
-  ((origin :initarg :origin :initform (make-point 0 0) :accessor origin)
-   (velocity :initarg :velocity :initform (make-point 0 0) :accessor velocity)
-   (acceleration :initarg :acceleration :initform (make-point 0 0) :accessor acceleration)
+  ((origin :initarg :origin :initform (make-point) :accessor origin)
+   (velocity :initarg :velocity :initform (make-point) :accessor velocity)
+   (acceleration :initarg :acceleration :initform (make-point) :accessor acceleration)
    (density :initarg :density :initform 1 :accessor density)))
 (defgeneric apply-velocity (object)
   (:documentation "Applies the object's velocity to its position"))
@@ -188,10 +196,10 @@
   (format t "~%event :name ~a" (name e)))
 
 (defclass mouse-event (event)
-  ((button :initarg :button :accessor button)
-   (state :initarg :state :accessor state)
-   (x :initarg :x :accessor x)
-   (y :initarg :y :accessor y))
+  ((button :initarg :button :initform 0 :accessor button)
+   (state :initarg :state :initform 0 :accessor state)
+   (x :initarg :x :initform 0 :accessor x)
+   (y :initarg :y :initform 0 :accessor y))
   (:default-initargs :name "mouse-event"))
 (defun make-mouse-event (button state x y) 
   (make-instance 'mouse-event :button button :state state :x x :y y))
@@ -208,41 +216,44 @@
 ; a unit is our standard game unit
 (defclass unit (display-circle physical-object)
   ((life :initarg :life :initform *tau* :accessor life)
-   (outline :initarg :outline :initform (make-arc 10 0 *tau* 16) :accessor outline)
+   (defense :initarg :defense :initform 1 :accessor defense)
+   (strength :initarg :strength :initform *tau* :accessor strength)
+   (outline :initarg :outline :initform (make-arc) :accessor outline)
    (outline-color :initarg :outline-color :initform (make-color 1 1 1 1) :accessor outline-color)
    (explode-radius :initform 50 :accessor explode-radius)))
 (defun make-unit (radius color outline-color &optional (unit-type 'unit))
-  (make-instance unit-type :radius radius :vertices (make-circle radius) :outline (make-arc radius 0 *tau*) :color color :outline-color outline-color))
+  (make-instance unit-type :radius radius :vertices (make-circle) :outline (make-arc) :color color :outline-color outline-color))
 (defmethod draw ((object unit))
   (call-next-method)
+  ; draw the outline
   (let* ((color (outline-color object))
-   (r (r color))
-   (b (b color))
-   (g (g color))
-   (a (a color))
-   (outline (offset-point-list (outline object) (origin object))))
-    (draw-point-list  outline :line-strip r b g a)))
+   (scale (radius object))
+   (origin (origin object))
+   (outline (outline object)))
+    (gl:matrix-mode :modelview)
+    (gl:load-identity)
+    (gl:translate (x origin) (y origin) 0)
+    (gl:scale scale scale 1)
+    (draw-point-list  outline :line-strip color))
+    (gl:load-identity))
 (defgeneric decrement-life (pc damage)
   (:documentation "Decrements the life of the unit by 'damage, returns new life count"))
 (defmethod decrement-life ((pc unit) damage)
-  (setf (outline pc) (make-arc (radius pc) 0 (- (life pc) damage)))
+  (setf (outline pc) (make-arc 1 0 (- (life pc) damage)))
   (setf (life pc) (max 0 (- (life pc) damage))))
-(defgeneric update-radius (object radius)
-  (:documentation "Updates the radius of the unit"))
-(defmethod update-radius ((object unit) radius)
+(defgeneric update-dying-unit (object radius)
+  (:documentation "Updates a dying unit"))
+(defmethod update-dying-unit ((object unit) radius)
+  (setf (radius object) radius)
   (setf (a (color object)) (- 1.0 (/ (radius object) (explode-radius object))))
-  (setf (a (outline-color object)) (- 1.0 (/ (radius object) (explode-radius object))))
-  (setf (outline object) 
-    (setf (vertices object) 
-      (make-circle (setf (radius object) radius)))))
+  (setf (a (outline-color object)) (- 1.0 (/ (radius object) (explode-radius object)))))
       
-(defun update-unit (unit &optional &key life radius points velocity acceleration origin color outline-color)
+(defun update-unit (unit &optional &key life radius velocity acceleration origin color outline-color)
   "Updates the values of a unit"
-  (if life (setf (life unit) life))
-  (if radius (progn
-    (setf (radius unit) radius)
-    (setf (vertices unit) (make-circle radius (if points points 32)))
-    (setf (outline unit) (make-arc radius 0 (life unit)))))
+  (if radius (setf (radius unit) radius))
+  (if life 
+    (setf (outline unit) 
+      (make-arc 1 0 (max 0 (setf (life unit) life)))))
   (if velocity (setf (velocity unit) velocity))
   (if acceleration (setf (acceleration unit) acceleration))
   (if origin (setf (origin unit) origin))
@@ -255,29 +266,64 @@
   (:default-initargs :radius 10
    :color (make-color (/ 108 255) (/ 108 255) (/ 108 255))
    :outline-color (make-color (/ 251 255) (/ 38 255) 0)
-   :outline (make-arc 10 0 *tau* 32)
-   :vertices (make-circle 10 32)))
+   :outline (make-arc)
+   :vertices (make-circle)))
 
-; coreblast is the main weapon, it sends out a shock wave
-(defclass core-blast (unit)
-  ((expansion-rate :initarg :expansion-rate :initform 1 :accessor expansion-rate)))
-(defun make-core-blast (radius)
-  (make-unit radius (make-color 1 1 1 0.3) (make-color (/ 92 255) (/ 221 255) (/ 238 255) 1) 'core-blast))
-(defmethod draw ((object core-blast))
-  (call-next-method))
+;(weapons)
+(defclass weapon (unit)
+  ((parent-core :initarg :parent-core :initform nil :accessor parent-core)
+   (death-time :initarg :death-time :initform nil :accessor death-time)
+   (cooldown-time :initarg :cooldown-time :initform 10000 :accessor cooldown-time)))
+(defgeneric cooldown (w)
+  (:documentation "Cools the weapon down"))
+(defgeneric renew (w)
+  (:documentation "Renews the weapon"))
+(defmethod cooldown ((w weapon))
+  (if (death-time w) 
+    (let ((been-cooling (- (millitime) (death-time w))))
+      (if (>= been-cooling (cooldown-time w))
+        (setf w (renew w))))
+    (setf (death-time w) (millitime)))
+  w) ; return the weapon (renewed or not)
   
+; coreblast is the main weapon, it sends out a shock wave
+(defclass core-blast (weapon)
+  ((expansion-rate :initarg :expansion-rate :initform 16 :accessor expansion-rate))
+  (:default-initargs :defense 100))
+(defun make-core-blast (radius &optional core)
+  (let ((blast (make-unit radius (make-color (/ 92 255) (/ 169 255) (/ 238 255) 0.3) (make-color (/ 92 255) (/ 221 255) (/ 238 255) 1) 'core-blast)))
+    (setf (parent-core blast) core)
+    blast))
+(defmethod draw ((object core-blast))
+  (if (eql (death-time object) nil)
+    (call-next-method)))
+(defmethod renew ((w core-blast))
+  (make-core-blast 50 (parent-core w)))
+;(/weapons)
+
 (defclass core (unit)
   ((blast :initarg :blast :initform (make-core-blast 50) :accessor blast))
   (:default-initargs :radius 50
    :color (make-color (/ 231 255) (/ 250 255) (/ 216 255))
    :outline-color (make-color (/ 188 255) (/ 238 255) (/ 92 255))))
 (defun make-core (radius)
-  (make-instance 'core :radius radius :outline (make-arc radius 0 *tau*)
-   :vertices (make-circle (- radius 3))
-   :blast (make-core-blast radius)))
+  (let ((core (make-instance 'core :radius radius :outline (make-arc)
+   :vertices (make-circle)
+   :blast (make-core-blast radius))))
+    (setf (parent-core (blast core)) core)
+    core)) ; return the core after setting the blast's parent core
 (defmethod draw ((object core))
   (draw (blast object))
-  (call-next-method))
+  (gl:matrix-mode :modelview)
+  (gl:load-identity)
+  (gl:translate (x (origin object)) (y (origin object)) 0)
+  (gl:scale (* (radius object) 0.8) (* (radius object) 0.8) 1)
+  (draw-point-list (vertices object) :polygon (color object))
+  (gl:matrix-mode :modelview)
+  (gl:load-identity)
+  (gl:translate (x (origin object)) (y (origin object)) 0)
+  (gl:scale (radius object) (radius object) 1)
+  (draw-point-list (outline object) :line-strip (outline-color object)))
   
 (defun create-random-baddies (number inner-radius add-to-radius &optional (baddy-type 'baddy))
  "Creates 'number baddies to converge upon bourtange and collects them..."
@@ -296,12 +342,12 @@
    (last-tick-time :initarg :last-tick-time :initform 0 :accessor last-tick-time)
    (player-core :initform (make-core 20) :accessor player-core)
    (baddies :initform (create-random-baddies 300 300 400) :accessor baddies)
-   (collided-baddies :initform () :accessor collided-baddies)
+   (just-killed-baddies :initform () :accessor just-killed-baddies)
    (dying-baddies :initform () :accessor dying-baddies)))
 (defmethod draw ((object program))
+  (draw (player-core object))
   (draw-list (dying-baddies object))
-  (draw-list (baddies object))
-  (draw (player-core object)))
+  (draw-list (baddies object)))
    
 (defgeneric millis-since-last-tick (p)
   (:documentation "The number of milliseconds since the last set tick"))
@@ -310,7 +356,7 @@
 (defparameter *program* (make-instance 'program)
 	"The main data structure for the game.")
 	
-(defun find-collided-baddies (baddies object)
+(defun find-collided-objects (baddies object)
   "Finds baddies that collide with object and returns that list"
   (remove nil (loop for x from 0 to (- (length baddies) 1) collect
     (if (check-collision (nth x baddies) object) (nth x baddies) nil))))
@@ -320,26 +366,50 @@
   (remove nil 
     (loop for x from 0 to (- (length baddies) 1) collect
       (let ((baddy (nth x baddies)))
-        (update-radius baddy (+ (radius baddy) 1))
+        (update-dying-unit baddy (+ (radius baddy) 1))
         (if (> (radius baddy) (explode-radius baddy)) nil baddy)))))
-	
+
+;(stepping functions)
+(defun step-core-blast (blast baddies)
+  "Progresses the life of the core blast weapon, returns dying baddies"
+  (if (death-time blast) (return-from step-core-blast (list )))
+  (update-unit blast :radius (+ (radius blast) (expansion-rate blast)))
+  (let* ((hit-baddies (find-collided-objects baddies blast))
+   (blast-strength (strength blast))
+   (blast-life (life blast))
+   (blast-defense (defense blast)))
+    (remove nil
+      (loop for x from 0 to (- (length hit-baddies) 1) collect 
+        (let* ((baddy (nth x hit-baddies))
+         (baddy-life-taken (* blast-strength (/ 1 (defense baddy))))
+         (blast-life-taken (* (strength baddy) (/ 1 blast-defense))))
+          (update-unit baddy :life (- (life baddy) baddy-life-taken))
+          (update-unit blast :life (- (life blast) blast-life-taken))
+          (if (<= 0 (life baddy)) baddy nil))))))
+;(/stepping functions)	
+  
 (defun draw-display ()
   "Called every frame to draw things - this is our main game loop"
   ; update time
   (setf (last-tick-time *program*) (millitime))
   (apply-all-list (baddies *program*))
-  ; core-blast stuff
   (let* ((pc (player-core *program*))
-   (baddies (baddies *program*)))
-    (setf (collided-baddies *program*) (find-collided-baddies baddies pc))
-    (dolist (baddy (collided-baddies *program*))
-      ; baddies that hit the core turn white
-      (update-unit baddy :color (make-color 1 1 1 1))
-      (let* ((damage (damage baddy)))
-        (decrement-life pc damage)
-        (setf baddies (delete baddy baddies))))
-    (setf (dying-baddies *program*) 
-     (explode-baddies (append (collided-baddies *program*) (dying-baddies *program*)))))
+   (baddies (baddies *program*))
+   (blasted-baddies (step-core-blast (blast pc) baddies)))
+    ;(format t "~%blasted: ~a" blasted-baddies)
+    (setf (just-killed-baddies *program*) 
+      (append  
+        blasted-baddies
+        (find-collided-objects baddies pc)))
+  (if (<= (life (blast pc)) 0) (setf (blast pc) (cooldown (blast pc)))))
+  ; remove just-killed-baddies from baddies
+  (setf (baddies *program*) (filter (just-killed-baddies *program*) (baddies *program*)))
+  ; add just-killed to dying
+  (setf (dying-baddies *program*) 
+    (append 
+      (dying-baddies *program*)
+      (just-killed-baddies *program*)))
+  (explode-baddies (dying-baddies *program*))
   ; draw it out
   (draw *program*))
 ;--------------------------------------
@@ -347,9 +417,9 @@
 ;--------------------------------------
 (defclass my-window (glut:window)
   ((fullscreen :initarg :fullscreen :reader fullscreen-p))
-  (:default-initargs :width 800 :height 600
+  (:default-initargs :width 1400 :height 1100
    :title "Do Not Faile Bourtange"
-   :pos-x 100 :pos-y 100
+   :pos-x 20 :pos-y 0
    :mode '(:double :rgb :depth)
    :fullscreen nil
    :tick-interval (round 1000 60)))  ; milliseconds per tick
@@ -359,18 +429,17 @@
   (gl:shade-model :smooth)        
   (gl:clear-color 0 0 0 0)  
   (gl:enable :blend)
-  (gl:blend-func :src-alpha :one-minus-src-alpha)       
-    
-  (when (fullscreen-p win)        
-    (glut:full-screen)))          
+  (gl:blend-func :src-alpha :one-minus-src-alpha))          
 
 (defmethod glut:display ((win my-window))
   ; clear the color buffer and depth buffer
   (gl:clear :color-buffer-bit :depth-buffer-bit)
   ; reset the modelview matrix
+  (gl:matrix-mode :projection)
   (gl:load-identity)              
   (let ((w (screen-width *program*)) (h (screen-height *program*)))
     (gl:scale (/ 1 w) (/ 1 h) 1))
+  (gl:matrix-mode :modelview)
   ; draw code
   (draw-display)
   ; swap the buffer onto the screen
@@ -388,9 +457,9 @@
   (gl:load-identity))             ; reset the matrix
 
 (defmethod glut:keyboard ((win my-window) key xx yy)
-  (declare (ignore xx yy))
   (case key
     ((#\Escape) 
+    (glut:destroy-current-window)
 	  (quit))))               ; when we get an 'f'
 
 ; mouse mouse while down/up
