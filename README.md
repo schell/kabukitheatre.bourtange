@@ -4,7 +4,7 @@ Bourtange is a game where you defend a number of planet-bases from a never endin
 
 controls
 --------
-r - reset the game
+r - reset the game  
 p - pause the game
 
 weapons
