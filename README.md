@@ -10,4 +10,4 @@ mouse click/move - buy cores and place on screen or buy weapons and place on cor
 
 weapons
 -------
-core blast - this is your starting weapon, and every core comes equipped with one. It radiates a blast out from the center of the core every 10 seconds.
+core blast - this is your starting weapon, and the first core comes equipped with one. It radiates a blast out from the center of the core every 7 seconds.
