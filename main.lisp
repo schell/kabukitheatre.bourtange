@@ -419,8 +419,6 @@
   (if (death-time this)
     (setf (color this) (make-color 255 255 255 (a (color this)))))
   this)
-(defgeneric cooldown-radius (this)
-  (:documentation "Returns the outer radius"))
 
 ;
 ;        ...
@@ -428,6 +426,9 @@
 ;
 (defclass weapon (unit)
   ((ndx :initarg :ndx :initform 1 :accessor ndx)))
+;
+(defgeneric cooldown-radius (this)
+  (:documentation "Returns the outer radius"))
 ;
 (defmethod cooldown-radius ((this weapon))
   (+ *core-size* (* 2 (ndx this))))
@@ -503,14 +504,7 @@
         (if (have-collided weapon that)
           (return-from have-collided (list weapon that))))
       nil)))
-;
-(defmethod cooldown-radius ((this core))
-  (+ *core-size* (* 2 (length (weapons this)))))
-(defmethod select-core((this core))
-  (make-instance 'core :radius (+ 2 (cooldown-radius this))
-    :color (make-color 255 255 255 10)
-    :outline-color (make-color 255 255 255 127)))
-
+  
 ;
 (defun draw-resources (resources &optional (point-size 10) (point (make-point (+ point-size (- (/ *screen-width* 2))) (- (/ *screen-height* 2) point-size))) (scale 1))
   "Draws the amount of resources available to the screen"
@@ -652,15 +646,26 @@
 ;
 (defmethod draw ((this program))
   (draw (spawning-belt this))
-  (if (selected-core this)
-    (draw (selected-core this)))
+  (format t "~%selected-core ~a" (if (selected-core this) "Yes" "No"))
+  (format t "~%selected-weapon ~a" (if (selected-weapon this) "Yes" "No"))
   (draw-list (goodies this))
   (draw-list (baddies this))
   (draw-list (dying-bodies this))
   (draw-resources (resources this))
   (draw (weapon-store this))
   (if (selected-weapon this)
-    (draw (selected-weapon this))))
+    (progn
+      (if (selected-core this)
+        (let* ((core (selected-core this))
+         (origin (origin core))
+         (radius (+ (radius core) (* 2 (length (weapons core))) 2))
+         (color (outline-color (selected-weapon this))))
+          (gl:matrix-mode :modelview)
+          (gl:load-identity)
+          (gl:translate (x origin) (y origin) 0)
+          (gl:scale radius radius 1)
+          (draw-point-list (vertices core) :line-loop color))
+        (draw (selected-weapon this))))))
 ; advance our program! THIS is the main logic loop
 (defmethod advance ((this program) milliseconds)
   ; gravitate the baddies toward the goodies
@@ -705,14 +710,24 @@
           (if (eql (weapon-class (selected-weapon this)) 'core)
             (let ((new-core (make-instance 'core)))
               (setf (origin new-core) (origin (mouse this)))
-              (setf (goodies this) (append (goodies this) (list new-core)))))
-          (setf (selected-weapon this) nil))
+              (setf (goodies this) (append (goodies this) (list new-core)))
+              (setf (selected-weapon this) nil))
+            (if (selected-core this)
+              (let ((weapon (make-instance (weapon-class (selected-weapon this)))))
+                (setf (origin weapon) (origin (selected-core this)))
+                (setf (ndx weapon) (1+ (length (weapons (selected-core this)))))
+                (setf (weapons (selected-core this)) (append 
+                  (weapons (selected-core this)) 
+                    (list weapon)))
+                (setf (selected-weapon this) nil)
+                (setf (selected-core this) nil)))))
         ; select the weapon
         (progn
           (setf (selected-weapon this) (select-weapon (weapon-store this) (mouse this) (resources this)))
           (if (selected-weapon this)
             ; deduct the cash
             (setf (resources this) (- (resources this) (cost (selected-weapon this)))))))))
+  ; if the user has selected a weapon
   (if (selected-weapon this)
     (progn
       (if (not (eql (weapon-class (selected-weapon this)) 'core))
@@ -720,10 +735,10 @@
           ; find the core we're attaching the upgrade to
           (if (have-collided (nth x (goodies this)) (mouse this))
             (progn
-              (setf (selected-core this) (select-core (nth x (goodies this))))
-              (return)))))
-      (setf (origin (selected-weapon this)) (origin (mouse this))))
-    (setf (selected-core this) nil))
+              (setf (selected-core this) (nth x (goodies this)))
+              (return))
+            (setf (selected-core this) nil))))
+      (setf (origin (selected-weapon this)) (origin (mouse this)))))
   (let ((collided (have-collided (weapon-store this) (mouse this))))
     (if collided
       (progn
