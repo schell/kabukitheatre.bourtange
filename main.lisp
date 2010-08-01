@@ -283,7 +283,7 @@
 (defgeneric has-clicked (this)
   (:documentation "Return whether or not a click event has happened and is waiting to be cleared."))
 (defmethod has-clicked ((this mouse))
-  (and (eql (state this) :up) (not (eql (state this) (last-state this)))))
+  (and (eql (state this) :down) (not (eql (state this) (last-state this)))))
 ;--------------------------------------
 ;  Game logic
 ;--------------------------------------
@@ -458,6 +458,7 @@
 (defmethod renew ((this core-blast))
   (let ((new-core-blast (make-instance 'core-blast)))
     (setf (origin new-core-blast) (origin this))
+    (setf (ndx new-core-blast) (ndx this))
     new-core-blast))
 (defmethod explode ((this core-blast))
   (setf (outline this) (make-arc 1 0 (* *tau* (/ (death-time this) (cooldown-time this)))))
@@ -632,7 +633,8 @@
 ;  | 1001001 |
 ;  \---------/
 (defclass program ()
-  ((spawning-belt :initform (make-display-ring *outer-spawning-radius* *inner-spawning-radius* (make-color 255 255 255 10)) :accessor spawning-belt)
+  ((is-paused :initform nil :accessor is-paused)
+   (spawning-belt :initform (make-display-ring *outer-spawning-radius* *inner-spawning-radius* (make-color 255 255 255 10)) :accessor spawning-belt)
    (baddies :initform (create-random-baddies *total-baddies* *outer-spawning-radius* *inner-spawning-radius*) :accessor baddies)
    (goodies :initform (list (make-instance 'core :weapons (list (make-instance 'core-blast)))) :accessor goodies)
    (dying-bodies :initform () :accessor dying-bodies)
@@ -646,8 +648,6 @@
 ;
 (defmethod draw ((this program))
   (draw (spawning-belt this))
-  (format t "~%selected-core ~a" (if (selected-core this) "Yes" "No"))
-  (format t "~%selected-weapon ~a" (if (selected-weapon this) "Yes" "No"))
   (draw-list (goodies this))
   (draw-list (baddies this))
   (draw-list (dying-bodies this))
@@ -668,6 +668,8 @@
         (draw (selected-weapon this))))))
 ; advance our program! THIS is the main logic loop
 (defmethod advance ((this program) milliseconds)
+  (if (is-paused this)
+    (return-from advance this))
   ; gravitate the baddies toward the goodies
   (gravitate-bodies (baddies this) (goodies this))
   ; find collisions and handle them (collects)
@@ -810,8 +812,11 @@
 
 (defmethod glut:keyboard ((this my-window) key xx yy)
   (case key
+    ; pause the game
+    (#\p
+      (setf (is-paused (program this)) (not (is-paused (program this)))))
+    ; reset the program (new game)
     (#\r 
-      ; reset the program (new game)
       (setf (program this) (set-store-position (make-program))))
     (#\Escape
       (glut:destroy-current-window)
