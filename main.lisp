@@ -1,14 +1,11 @@
-; Bourtange - a fort defense game
-; Schell Scivally
-; Sat Jul  3 11:31:06 PDT 2010
-;--------------------------------------
-;  Dependencies
-;--------------------------------------
-(require 'asdf)
-(require 'asdf-install)
-(asdf:load-system :cl-opengl) 
-(asdf:load-system :cl-glu)    
-(asdf:load-system :cl-glut)		
+;;;; Bourtange - a fort defense game
+;;;; Schell Scivally
+;;;; Sat Jul  3 11:31:06 PDT 2010
+
+(cl:defpackage :bourtange
+  (:use :cl))
+(in-package :bourtange)
+
 ;--------------------------------------
 ;  Parameters
 ;--------------------------------------
@@ -851,5 +848,3 @@
 ;--------------------------------------
 (defun main ()
   (glut:display-window (make-instance 'my-window :program (make-program))))
-  
-(main)
