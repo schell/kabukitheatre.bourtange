@@ -365,7 +365,7 @@
     (when (> (radius this) *boundary*)
       (setf (life this) 0))
     (setf (outline this) (make-arc 1 0 (life this)))
-    (if (not (minusp (life this)))
+    (if (<= (life this) 0)
         ;; will return a renewed unit if cooldown-time has been reached
         (cooldown this milliseconds)
         (progn
@@ -695,7 +695,6 @@
     (return-from advance this))
   ;; gravitate the baddies toward the goodies
   (gravitate-bodies (baddies this) (goodies this))
-  (return-from advance this)
   ;; find collisions and handle them (collects)
   (loop for goody in (goodies this) do
        (loop for baddy in (baddies this)
