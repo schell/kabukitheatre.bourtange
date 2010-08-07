@@ -18,8 +18,8 @@
 (defparameter *screen-width* 0)
 (defparameter *screen-height* 0)
 (defparameter *last-tick* nil)
-(defparameter *g* .0001
-  "The gravitational constant.") ;px/milisecond
+(defparameter *g* 0.1
+  "The gravitational constant.") ;px/second
 (defparameter *inner-spawning-radius* 400
   "The start of the spawning belt. Baddies will start spawning past this number.")
 (defparameter *outer-spawning-radius* 700
@@ -34,9 +34,9 @@
 ;;;--------------------------------------
 ;;;  Some utility functions
 ;;;--------------------------------------
-(defun millitime ()
-  "The internal real time measured in milliseconds"
-  (* (get-internal-real-time) (/ 1000 internal-time-units-per-second)))
+(defun the-time ()
+  "The internal real time measured in seconds"
+  (/ (get-internal-real-time) internal-time-units-per-second ))
 (defgeneric multiply (x y)
   (:documentation "Multiplies two things together."))
 (defun filter (a b)
@@ -292,9 +292,9 @@
    (strength :initarg :strength :initform 1 :accessor strength :documentation "The unit's strength (how much damage it does).")
    (outline :initarg :outline :initform (make-arc) :accessor outline)
    (outline-color :initarg :outline-color :initform (make-color) :accessor outline-color)
-   (cooldown-time :initarg :cooldown-time :initform 1000 :accessor cooldown-time :documentation "The time it takes to die.")
+   (cooldown-time :initarg :cooldown-time :initform 1 :accessor cooldown-time :documentation "The time it takes to die.")
    (death-time :initarg :death-time :initform nil :accessor death-time :documentation "The time spent dead.")
-   (explode-rate :initarg :explode-rate :initform 1/50 :accessor explode-rate :documentation "Some factor that progresses the death sequence.")
+   (explode-rate :initarg :explode-rate :initform 20 :accessor explode-rate :documentation "Some factor that progresses the death sequence.")
    (radius-at-death :initarg :radius-at-death :initform nil :accessor radius-at-death)))
 (defun make-unit (radius color outline-color &optional (unit-type 'unit))
   (make-instance unit-type
@@ -454,14 +454,14 @@
   this)
 
 (defclass core-blast (weapon)
-  ((expansion-rate :initarg :expansion-rate :initform 1/10 :accessor expansion-rate
+  ((expansion-rate :initarg :expansion-rate :initform 100 :accessor expansion-rate
                    :documentation "Expands at 1px/millisecond"))
   (:documentation "coreblast is the main weapon, it sends out a shock wave")
   (:default-initargs
    :radius 10
    :density 0
    :defense 5
-   :cooldown-time 7000
+   :cooldown-time 7
    :color (make-color 251 255 85 20)
    :outline-color (make-color 251 255 85)
    :vertices (make-circle)
@@ -525,8 +525,8 @@
 		       (point-size 5.0) 
 		       (point (make-point (+ point-size (- (/ *screen-width* 2))) (- (/ *screen-height* 2) point-size))))
   "Draws the amount of resources available to the screen"
-  (let* ((rows 8)
-         (rest-point-size (* point-size (- resources (floor resources) 1.0)))
+  (let* ((rows 12)
+         (rest-point-size (* point-size (- resources (floor resources))))
          (points (loop for x from 0 to (1- resources) collect
                       (make-point
                        (* (mod x rows) (+ (* 2.0 point-size) 1))
@@ -603,7 +603,7 @@
             :accessor weapons))
   (:default-initargs :radius 100
     :death-time 0
-    :cooldown-time 500
+    :cooldown-time 0.5
     :vertices (make-circle)
     :outline (make-circle)
     :color (make-color 255 255 255 75)
@@ -625,11 +625,7 @@
 (defmethod collidedp ((this weapon-store) (that mouse))
   (let ((collided-weapon (find-if (lambda (weapon) (collidedp weapon that)) (weapons this))))
     (when collided-weapon
-      (list collided-weapon that)))
-  #+nil ;; for fun...
-  (awhen (find-if (fun _ (collidedp _ that)) (weapons this))
-    (list it that)))
-
+      (list collided-weapon that))))
 ;;
 (defun set-store-position (program)
   (setf (origin (weapon-store program))
@@ -642,9 +638,8 @@
                                    (length (weapons (weapon-store program))))
      for position in positions
      for weapon in (weapons (weapon-store program))
-     do (setf (origin weapon)
-              (add (origin (weapon-store program))
-                   position)))
+     do (setf (origin weapon) (add (origin (weapon-store program)) position)
+	      (last-origin weapon) (origin weapon)))
   program)
 ;;
 (defun select-weapon (store mouse resources)
@@ -667,7 +662,7 @@
    (selected-weapon :initform nil :accessor selected-weapon)
    (selected-core :initform nil :accessor selected-core)))
 (defun make-program ()
-  (make-instance 'program)) ; return the program object
+  (set-store-position (make-instance 'program))) ; return the program object
 (defparameter *program* (make-program))
 ;
 (defmethod draw ((this program))
@@ -689,43 +684,8 @@
           (gl:scale radius radius 1)
           (draw-point-list (vertices core) :line-loop color))
         (draw (selected-weapon this)))))
-; advance our program! THIS is the main logic loop
-(defmethod advance ((this program) milliseconds)
-  (when (is-paused this)
-    (return-from advance this))
-  ;; gravitate the baddies toward the goodies
-  (gravitate-bodies (baddies this) (goodies this))
-  ;; find collisions and handle them (collects)
-  (loop for goody in (goodies this) do
-       (loop for baddy in (baddies this)
-          for collided = (collidedp goody baddy)
-          when collided
-          ;; since we're probably testing a collision with a baddy and a core
-          ;; collidedp returns a list of the baddy and the weapon (unit)
-          ;; that the baddy collided with, that way we can damage the weapon
-          do (apply #'collide collided)))
-  ;; advance the baddies, dead baddies will be renewed in 'advance
-  (setf (baddies this)
-        (mapcar (lambda (baddy) (advance baddy milliseconds))
-                (baddies this)))
-  ;; advance the goodies, dead goodies will be renewed in 'advance
-  (setf (goodies this)
-        (loop for goody in (goodies this)
-           ;; right here we're probably advancing cores, which in turn
-           ;; advance each core's weapons
-           for advanced = (advance goody milliseconds)
-           when advanced
-           collect advanced))
-  ;; add the just killed baddies resources to our pool
-  (setf (resources this)
-        (+ (resources this)
-           (flet ((maybe-collect-resources (baddy)
-                    (if (eql 0 (death-time baddy))
-                        (get-resources baddy)
-                        0)))
-             (reduce #'+ (baddies this)
-                     :key #'maybe-collect-resources
-                     :initial-value 0))))  
+; advance our program! THESE are the main logic loop
+(defmethod advance :before ((this program) seconds)
   ;; user interaction!
   (when (clickedp (mouse this))
     (setf (last-state (mouse this)) (state (mouse this)))
@@ -761,21 +721,61 @@
                  (return))
                (setf (selected-core this) nil))))
     (setf (origin (selected-weapon this)) (origin (mouse this))))
+  ;; weapon store interaction
   (let ((collided (collidedp (weapon-store this) (mouse this))))
     (if collided
         (progn
-          (draw-resources (cost (first collided))
+           (draw-resources (cost (first collided))
                           4
                           (add (origin (first collided))
                                (make-point 0 (- 0 (radius (first collided)) 4))))
-          (setf (weapon-store this) (advance (weapon-store this) milliseconds)))
-        (setf (weapon-store this) (cooldown (weapon-store this) milliseconds))))
+          (setf (weapon-store this) (advance (weapon-store this) seconds)))
+        (setf (weapon-store this) (cooldown (weapon-store this) seconds)))))
+;
+(defmethod advance ((this program) seconds)
+  ;; automagical game-logic
+  ;; step out of the game loop if we're paused
+  (when (is-paused this)
+    (return-from advance this))
+  ;; gravitate the baddies toward the goodies
+  (gravitate-bodies (baddies this) (goodies this))
+  ;; find collisions and handle them (collects)
+  (loop for goody in (goodies this) do
+       (loop for baddy in (baddies this)
+          for collided = (collidedp goody baddy)
+          when collided
+          ;; since we're probably testing a collision with a baddy and a core
+          ;; collidedp returns a list of the baddy and the weapon (unit)
+          ;; that the baddy collided with, that way we can damage the weapon
+          do (apply #'collide collided)))
+  ;; advance the baddies, dead baddies will be renewed in 'advance
+  (setf (baddies this)
+        (mapcar (lambda (baddy) (advance baddy seconds))
+                (baddies this)))
+  ;; advance the goodies, dead goodies will be renewed in 'advance
+  (setf (goodies this)
+        (loop for goody in (goodies this)
+           ;; right here we're probably advancing cores, which in turn
+           ;; advance each core's weapons
+           for advanced = (advance goody seconds)
+           when advanced
+           collect advanced))
+  ;; add the just killed baddies resources to our pool
+  (setf (resources this)
+        (+ (resources this)
+           (flet ((maybe-collect-resources (baddy)
+                    (if (eql 0 (death-time baddy))
+                        (get-resources baddy)
+                        0)))
+             (reduce #'+ (baddies this)
+                     :key #'maybe-collect-resources
+                     :initial-value 0))))  
   this) ; return this program
 
 ;;
 (defun draw-display ()
   "Called every frame to draw things - this is our main game loop"
-  (let ((time (millitime)))
+  (let ((time (the-time)))
     (unless *last-tick*
       (setf *last-tick* time))
     ;; update program
@@ -835,7 +835,7 @@
      (setf (is-paused *program*) (not (is-paused *program*))))
     ;; reset the program (new game)
     (#\r
-     (setf *program* (set-store-position (make-program))))))                          ; when we get an 'f'
+     (setf *program* (make-program)))))                         
 
 (defun update-mouse (mouse x y &optional button state)
   ;; transmute coordinates
@@ -866,6 +866,11 @@
 ;;;--------------------------------------
 ;;;  Setup and go
 ;;;--------------------------------------
+(defun level (number)
+  "Sets up the program object for a specific level"
+  (case number
+    (otherwise (make-program))))
+
 (defun main ()
-  (glut:display-window (make-instance 'my-window :program *program*)))
+  (glut:display-window (make-instance 'my-window :program (setf *program* (level 0)))))
 
