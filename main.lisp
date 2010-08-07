@@ -112,6 +112,7 @@
 (defun make-circle (&optional (radius 1) (points 360))
   "Creates a circle of 'points points"
   (loop for x from 1 to points collect (multiply (rad->xy (* x (/ *tau* points))) radius)))
+(defparameter *circle* (make-circle))
 
 (defun make-arc (&optional (radius 1) (start-radian 0) (end-radian *tau*) (points 360))
   "Creates an arc"
@@ -520,28 +521,32 @@
         (when weapon (list weapon that)))))
 
 ;;
-(defun draw-resources (resources &optional (point-size 10) (point (make-point (+ point-size (- (/ *screen-width* 2))) (- (/ *screen-height* 2) point-size))) (scale 1))
+(defun draw-resources (resources &optional 
+		       (point-size 5.0) 
+		       (point (make-point (+ point-size (- (/ *screen-width* 2))) (- (/ *screen-height* 2) point-size))))
   "Draws the amount of resources available to the screen"
   (let* ((rows 8)
-         (rest-point-size (* point-size (- resources (floor resources))))
+         (rest-point-size (* point-size (- resources (floor resources) 1.0)))
          (points (loop for x from 0 to (1- resources) collect
                       (make-point
-                       (* (mod x rows) (+ 2 point-size))
-                       (- (* (floor (/ x rows)) (+ 2 point-size))))))
+                       (* (mod x rows) (+ (* 2.0 point-size) 1))
+                       (- (* (floor (/ x rows)) (+ (* 2.0 point-size) 1))))))
          (last-full-point (if (last points) (first (last points)) (make-point))))
-    (gl:point-size 1 #+nil point-size)
+    (mapcar #'(lambda (p) 
+		(progn
+		  (gl:load-identity)
+		  (gl:translate (+ (x p) (x point)) 
+				(+ (y p) (y point)) 
+				0)
+		  (gl:scale point-size point-size 1)
+		  (draw-point-list *circle* :polygon (make-color 155 92 238))))
+	    points)
     (gl:load-identity)
-    (gl:translate (x point) (y point) 0)
-    (gl:scale scale scale 1)
-    (draw-point-list points :points (make-color 155 92 238))
-    (gl:point-size rest-point-size)
-    (draw-point-list (list
-                      (make-point
-                       (+ (x last-full-point) point-size 2)
-                       (+ (y last-full-point))))
-                     :points
-                     (make-color 232 125 241))))
-
+    (gl:translate (+ (x point) (x last-full-point) (* 2 point-size) 1) 
+		  (+ (y point) (y last-full-point)) 
+		  0)
+    (gl:scale rest-point-size rest-point-size 1)
+    (draw-point-list *circle* :polygon (make-color 232 125 241))))
 ;;
 (defun check-out-of-bounds (object)
   "Checks an object to assert it is out of bounds."
@@ -663,6 +668,7 @@
    (selected-core :initform nil :accessor selected-core)))
 (defun make-program ()
   (make-instance 'program)) ; return the program object
+(defparameter *program* (make-program))
 ;
 (defmethod draw ((this program))
   (draw (spawning-belt this))
@@ -689,6 +695,7 @@
     (return-from advance this))
   ;; gravitate the baddies toward the goodies
   (gravitate-bodies (baddies this) (goodies this))
+  (return-from advance this)
   ;; find collisions and handle them (collects)
   (loop for goody in (goodies this) do
        (loop for baddy in (baddies this)
@@ -767,31 +774,28 @@
   this) ; return this program
 
 ;;
-(defun draw-display (program)
+(defun draw-display ()
   "Called every frame to draw things - this is our main game loop"
-  ;; find milliseconds since last tick
   (let ((time (millitime)))
     (unless *last-tick*
       (setf *last-tick* time))
     ;; update program
-    (setf program (advance program (- time *last-tick*)))
+    (setf *program* (advance *program* (- time *last-tick*)))
     ;; draw it out
-    (draw program)
+    (draw *program*)
     ;; set the last tick
-    (setf *last-tick* time)
-    program))
+    (setf *last-tick* time)))
 ;--------------------------------------
 ;  Gl/Glut stuff
 ;--------------------------------------
 (defclass my-window (glut:window)
-  ((fullscreen :initarg :fullscreen :reader fullscreen-p)
-   (program :initarg :program :accessor program))
+  ((fullscreen :initarg :fullscreen :reader fullscreen-p))
   (:default-initargs :width 1400 :height 1100
                      :title *headline*
                      :pos-x 20 :pos-y 0
                      :mode '(:double :rgb :depth)
                      :fullscreen nil
-                     :tick-interval (round 1000 60))) ; milliseconds per tick
+		     :tick-interval (round 1000 60))) ; milliseconds per tick
 
 (defmethod glut:display-window :before ((win my-window))
   (gl:line-width 1)
@@ -803,15 +807,8 @@
 (defmethod glut:display ((this my-window))
   ;; clear the color buffer and depth buffer
   (gl:clear :color-buffer-bit :depth-buffer-bit)
-  ;; reset the modelview matrix
-  (gl:matrix-mode :projection)
-  (gl:load-identity)
-  (let ((/w (/ (/ *screen-width* 2)))
-        (/h (/ (/ *screen-height* 2))))
-    (gl:scale /w /h 1))
-  (gl:matrix-mode :modelview)
   ;; draw code
-  (draw-display (program this))
+  (draw-display)
   ;; swap the buffer onto the screen
   (glut:swap-buffers))
 
@@ -822,23 +819,24 @@
   (gl:matrix-mode :projection)          ; select the projection matrix
   (gl:load-identity)                    ; reset the matrix
   (glu:ortho-2d -1 1 -1 1)
+  ;; reset the projection matrix
+  (gl:load-identity)
+  (let ((/w (/ (/ width 2)))
+        (/h (/ (/ height 2))))
+    (gl:scale /w /h 1))
   (gl:matrix-mode :modelview)           ; select the modelview matrix
   (gl:load-identity)                    ; reset the matrix
-  (set-store-position (program this)))
+  (set-store-position *program*))
 
 (defmethod glut:keyboard ((this my-window) key xx yy)
   (declare (ignore xx yy))
   (case key
     ;; pause the game
     (#\p
-     (setf (is-paused (program this)) (not (is-paused (program this)))))
+     (setf (is-paused *program*) (not (is-paused *program*))))
     ;; reset the program (new game)
     (#\r
-     (setf (program this) (set-store-position (make-program))))
-    (#\Escape
-     (glut:destroy-current-window)
-     ;; THERE IS NO QUIT
-     (quit))))                          ; when we get an 'f'
+     (setf *program* (set-store-position (make-program))))))                          ; when we get an 'f'
 
 (defun update-mouse (mouse x y &optional button state)
   ;; transmute coordinates
@@ -854,21 +852,21 @@
     (setf (state mouse) state))
   mouse)
 
-;;; mouse mouse while down/up
+;; mouse mouse while down/up
 (defmethod glut:mouse ((this my-window) button state x y)
-  (setf (mouse (program this))
-        (update-mouse (mouse (program this)) x y button state)))
+  (setf (mouse *program*)
+        (update-mouse (mouse *program*) x y button state)))
 
 ;; mouse move passively (no button down)
 (defmethod glut:passive-motion ((this my-window) x y)
-  (setf (mouse (program this))
-        (update-mouse (mouse (program this)) x y)))
+  (setf (mouse *program*)
+        (update-mouse (mouse *program*) x y)))
 
-(defmethod glut:tick ((win my-window))
-  (glut:post-redisplay))        ; tell GLUT to redraw
-
+(defmethod glut:tick ((this my-window))
+  (glut:post-redisplay))
 ;;;--------------------------------------
 ;;;  Setup and go
 ;;;--------------------------------------
 (defun main ()
-  (glut:display-window (make-instance 'my-window :program (make-program))))
+  (glut:display-window (make-instance 'my-window :program *program*)))
+

@@ -1,0 +1,5 @@
+(require :swank)
+(swank:create-server)
+(require 'kabukitheatre.bourtange)
+(in-package :bourtange)
+(main)
