@@ -344,12 +344,12 @@
     this))
 
 ;;
-(defgeneric cooldown (this milliseconds)
-  (:documentation "Cools the unit down by 'milliseconds")
-  (:method ((this unit) milliseconds)
+(defgeneric cooldown (this seconds)
+  (:documentation "Cools the unit down by 'seconds")
+  (:method ((this unit) seconds)
     (setf (death-time this)
           (if (death-time this)
-              (+ (death-time this) milliseconds)
+              (+ (death-time this) seconds)
               0))
     (if (>= (death-time this) (cooldown-time this))
         (renew this)
@@ -357,9 +357,9 @@
         (explode this))))
 
 ;;
-(defgeneric advance (this milliseconds)
+(defgeneric advance (this seconds)
   (:documentation "Steps the unit forward in time")
-  (:method ((this unit) milliseconds)
+  (:method ((this unit) seconds)
     (when (> (distance (make-point) (origin this)) *boundary*)
       (setf (life this) 0))
     (when (> (radius this) *boundary*)
@@ -367,9 +367,9 @@
     (setf (outline this) (make-arc 1 0 (life this)))
     (if (<= (life this) 0)
         ;; will return a renewed unit if cooldown-time has been reached
-        (cooldown this milliseconds)
+        (cooldown this seconds)
         (progn
-          (apply-all this milliseconds)
+          (apply-all this seconds)
           this))))
 ;;
 (defgeneric collide (this that)
@@ -440,7 +440,8 @@
 ;;;       (_) :..*       the weapons!
 ;;;
 (defclass weapon (unit)
-  ((ndx :initarg :ndx :initform 1 :accessor ndx)))
+  ((core :initarg :core :initform nil :accessor core)
+   (ndx :initarg :ndx :initform 1 :accessor ndx)))
 ;;
 (defgeneric cooldown-radius (this)
   (:documentation "Returns the outer radius")
@@ -449,10 +450,20 @@
 ;;
 (defmethod cooldown ((this weapon) ms)
   (declare (ignore ms))
-  (setf this (call-next-method))
-  (setf (radius this) (cooldown-radius this))
+  (setf this (call-next-method)
+	(origin this) (origin (core this))
+	(radius this) (cooldown-radius this))
   this)
+;;
+(defmethod renew ((this weapon))
+  (format t "~%~a renew weapon" (the-time))
+  (let ((new-weapon (make-instance (class-of this))))
+    (setf (origin new-weapon) (origin (core this))
+	  (core new-weapon) (core this)
+          (ndx new-weapon) (ndx this))
+    new-weapon))
 
+;;
 (defclass core-blast (weapon)
   ((expansion-rate :initarg :expansion-rate :initform 100 :accessor expansion-rate
                    :documentation "Expands at 1px/millisecond"))
@@ -466,21 +477,31 @@
    :outline-color (make-color 251 255 85)
    :vertices (make-circle)
    :outline (make-arc)))
-(defmethod advance ((this core-blast) milliseconds)
-  (setf (radius this) (+ (radius this) (* milliseconds (expansion-rate this))))
+(defmethod advance ((this core-blast) seconds)
+  (setf (radius this) (+ (radius this) (* seconds (expansion-rate this))))
   (call-next-method)) ; return this core-blast
-(defmethod renew ((this core-blast))
-  (let ((new-core-blast (make-instance 'core-blast)))
-    (setf (origin new-core-blast) (origin this)
-          (ndx new-core-blast) (ndx this))
-    new-core-blast))
-(defmethod explode ((this core-blast))
+(defmethod explode ((this weapon))
   (setf (outline this)
         (make-arc 1 0 (* *tau*
                          (/ (death-time this)
                             (cooldown-time this)))))
   this)
 
+;; advance
+(defclass decoy (weapon)
+  ()
+  (:documentation "decoy is a planet that gets launched into space in a random direction
+after cooldown. It attracts baddies through gravity.")
+  (:default-initargs
+   :radius 40
+   :density 10
+   :defense 50
+   :cooldown-time 1
+   :velocity (add (make-point -60.0 -60.0) (make-point (random 120.0) (random 120.0)))
+   :color (make-color 255 95 85 20)
+   :outline-color (make-color 255 95 85)
+   :vertices (make-circle)
+   :outline (make-arc)))
 ;;;
 ;;;      ()   ...the core
 ;;;
@@ -506,11 +527,11 @@
   (declare (ignore ms))
   (setf (color this) (make-color 251 38 0 255)))
 ;;
-(defmethod advance :before ((this core) milliseconds)
+(defmethod advance :before ((this core) seconds)
   (unless (death-time this)
     (setf (weapons this)
           (mapcar (lambda (weapon)
-                    (advance weapon milliseconds))
+                    (advance weapon seconds))
                   (weapons this)))))
 ;;
 (defmethod collidedp ((this core) (that unit))
@@ -519,7 +540,15 @@
       (let ((weapon (find-if (lambda (weapon) (collidedp weapon that))
                              (weapons this))))
         (when weapon (list weapon that)))))
-
+;;
+(defmethod get-grav-acceleration ((that baddy) (this core))
+  (let ((core-force (call-next-method)))
+    (loop for weapon in (weapons this) 
+	 for force = (get-grav-acceleration that weapon)
+	 sum (x force) into x-force
+	 sum (y force) into y-force
+	 finally (return (make-point (+ (x core-force) x-force)
+				     (+ (y core-force) y-force))))))
 ;;
 (defun draw-resources (resources &optional 
 		       (point-size 5.0) 
@@ -583,9 +612,6 @@
       :color (color wclass)
       :outline-color (outline-color wclass))))
 ;;
-#+nil(defmethod draw ((this weapon-store-item))
-  (call-next-method))
-;;
 (defgeneric copy (this)
   (:documentation "Copies this item")
   (:method ((this weapon-store-item))
@@ -599,7 +625,10 @@
                         :cost 10)
                        (make-weapon-store-item
                         :item 'core-blast
-                        :cost 10))
+                        :cost 10)
+		       (make-weapon-store-item
+			:item 'decoy
+			:cost 10))
             :accessor weapons))
   (:default-initargs :radius 100
     :death-time 0
@@ -612,13 +641,13 @@
 (defmethod draw :after ((this weapon-store))
   (map nil #'draw (weapons this)))
 ;;
-(defmethod advance ((this weapon-store) milliseconds)
-  (setf (death-time this) (min (cooldown-time this) (+ (death-time this) milliseconds))
+(defmethod advance ((this weapon-store) seconds)
+  (setf (death-time this) (min (cooldown-time this) (+ (death-time this) seconds))
         (a (color this)) (* 0.2 (/ (death-time this) (cooldown-time this))))
   this)
 ;;
-(defmethod cooldown ((this weapon-store) milliseconds)
-  (setf (death-time this) (max 0 (- (death-time this) milliseconds))
+(defmethod cooldown ((this weapon-store) seconds)
+  (setf (death-time this) (max 0 (- (death-time this) seconds))
         (a (color this)) (* 0.2 (/ (death-time this) (cooldown-time this))))
   this)
 ;;
@@ -654,16 +683,14 @@
   ((is-paused :initform nil :accessor is-paused)
    (spawning-belt :initform (make-display-ring *outer-spawning-radius* *inner-spawning-radius* (make-color 255 255 255 10)) :accessor spawning-belt)
    (baddies :initform (create-random-baddies *total-baddies* *outer-spawning-radius* *inner-spawning-radius*) :accessor baddies)
-   (goodies :initform (list (make-instance 'core :weapons (list (make-instance 'core-blast)))) :accessor goodies)
+   (goodies :initform nil :accessor goodies)
    (dying-bodies :initform () :accessor dying-bodies)
    (resources :initform 100 :accessor resources)
    (mouse :initform (make-instance 'mouse :radius 2 :vertices (make-circle)) :accessor mouse)
    (weapon-store :initform (make-instance 'weapon-store) :accessor weapon-store)
    (selected-weapon :initform nil :accessor selected-weapon)
    (selected-core :initform nil :accessor selected-core)))
-(defun make-program ()
-  (set-store-position (make-instance 'program))) ; return the program object
-(defparameter *program* (make-program))
+(defparameter *program* (make-instance 'program))
 ;
 (defmethod draw ((this program))
   (draw (spawning-belt this))
@@ -698,13 +725,14 @@
                       (selected-weapon this) nil))
               (when (selected-core this)
                 (let ((weapon (make-instance (weapon-class (selected-weapon this)))))
-                  (setf (origin weapon) (origin (selected-core this)))
-                  (setf (ndx weapon) (1+ (length (weapons (selected-core this)))))
-                  (setf (weapons (selected-core this)) (append
+                  (setf (origin weapon) (origin (selected-core this))
+			(core weapon) (selected-core this)
+			(ndx weapon) (1+ (length (weapons (selected-core this))))
+			(weapons (selected-core this)) (append
                                                         (weapons (selected-core this))
-                                                        (list weapon)))
-                  (setf (selected-weapon this) nil)
-                  (setf (selected-core this) nil))))
+                                                        (list weapon))
+			(selected-weapon this) nil
+			(selected-core this) nil))))
           ;; select the weapon
           (when (setf (selected-weapon this)
                       (select-weapon (weapon-store this) (mouse this) (resources this)))
@@ -835,7 +863,7 @@
      (setf (is-paused *program*) (not (is-paused *program*))))
     ;; reset the program (new game)
     (#\r
-     (setf *program* (make-program)))))                         
+     (setf *program* (level 1)))))                         
 
 (defun update-mouse (mouse x y &optional button state)
   ;; transmute coordinates
@@ -868,9 +896,21 @@
 ;;;--------------------------------------
 (defun level (number)
   "Sets up the program object for a specific level"
-  (case number
-    (otherwise (make-program))))
-
+  (set-store-position 
+   (case number
+     (1 (let* ((program (make-instance 'program))
+		       (core (make-instance 'core))
+		       (decoy (make-instance 'decoy :core core)))
+		  (setf (weapons core) (list decoy)
+			(goodies program) (list core))
+		  program))
+     ;; level 0
+     (otherwise (let* ((program (make-instance 'program))
+		       (core (make-instance 'core))
+		       (core-blast (make-instance 'core-blast :core core)))
+		  (setf (weapons core) (list core-blast)
+			(goodies program) (list core))
+		  program)))))
 (defun main ()
-  (glut:display-window (make-instance 'my-window :program (setf *program* (level 0)))))
+  (glut:display-window (make-instance 'my-window :program (setf *program* (level 1)))))
 
