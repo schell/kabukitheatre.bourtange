@@ -53,7 +53,7 @@
   "Returns the mass of a sphere with 'radius and 'density. (kg assumed)"
   (if (eql density 0)
       0
-      (/ (sphere-volume radius) density)))
+      (* (sphere-volume radius) density)))
 ;;;--------------------------------------
 ;;;  Game definitions
 ;;;--------------------------------------
@@ -246,7 +246,7 @@
   ((origin :initarg :origin :initform (make-point) :accessor origin)
    (velocity :initarg :velocity :initform (make-point) :accessor velocity)
    (acceleration :initarg :acceleration :initform (make-point) :accessor acceleration)
-   (density :initarg :density :initform 1 :accessor density)))
+   (density :initarg :density :initform .1 :accessor density)))
 (defgeneric apply-velocity (this milliseconds)
   (:documentation "Applies the this's velocity to its position")
   (:method ((this physical-object) milliseconds)
@@ -405,7 +405,7 @@
   ()
   (:default-initargs
    :radius 5
-   :density 5
+   :density .1
    :color (make-color 108 108 108)
    :outline-color (make-color 251 38 0)
    :outline (make-arc)
@@ -427,10 +427,11 @@
   (first (create-random-baddies 1 *outer-spawning-radius* *inner-spawning-radius*)))
 ;;
 (defmethod advance ((this baddy) ms)
+  (call-next-method))
+(defmethod advance :after ((this baddy) ms)
   (declare (ignore ms))
   "update the core's weapons"
-  (setf this (call-next-method) ;what?
-        (outline this) (make-arc 1 0 (life this)))
+  (setf (outline this) (make-arc 1 0 (life this)))
   (when (death-time this)
     (setf (color this) (make-color 255 255 255 (a (color this)))))
   this)
@@ -449,14 +450,14 @@
     (+ *core-size* (* 2 (ndx this)))))
 ;;
 (defmethod cooldown ((this weapon) ms)
+  (call-next-method))
+(defmethod cooldown :after ((this weapon) ms)
   (declare (ignore ms))
-  (setf this (call-next-method)
-	(origin this) (origin (core this))
+  (setf (origin this) (origin (core this))
 	(radius this) (cooldown-radius this))
   this)
 ;;
 (defmethod renew ((this weapon))
-  (format t "~%~a renew weapon" (the-time))
   (let ((new-weapon (make-instance (class-of this))))
     (setf (origin new-weapon) (origin (core this))
 	  (core new-weapon) (core this)
@@ -489,19 +490,32 @@
 
 ;; advance
 (defclass decoy (weapon)
-  ()
+  ((velocity-magnitude :initarg :velocity-magnitude :initform nil :accessor velocity-magnitude)
+   (spiral-rate :initarg :spiral-rate :initform nil :accessor spiral-rate)
+   (spiral-time :initarg :spiral-time :initform nil :accessor spiral-time))
   (:documentation "decoy is a planet that gets launched into space in a random direction
-after cooldown. It attracts baddies through gravity.")
+after cooldown. It attracts baddies through gravity as it spirals outward.")
   (:default-initargs
    :radius 40
-   :density 10
-   :defense 50
-   :cooldown-time 1
-   :velocity (add (make-point -60.0 -60.0) (make-point (random 120.0) (random 120.0)))
+   :density 0.5
+   :defense 2000
+   :cooldown-time 5
+   :spiral-rate 1/2
+   :spiral-time 0
+   :velocity-magnitude 20
    :color (make-color 255 95 85 20)
    :outline-color (make-color 255 95 85)
    :vertices (make-circle)
    :outline (make-arc)))
+(defmethod advance ((this decoy) seconds)
+  (call-next-method))
+(defmethod advance :before ((this decoy) seconds)
+  (let ((new-time (+ (spiral-time this) seconds))
+	(turn-time (/ 1 (spiral-rate this))))
+    (setf (spiral-time this) new-time)
+    (setf (acceleration this) (rad->xy new-time)))
+    this)
+  
 ;;;
 ;;;      ()   ...the core
 ;;;
@@ -511,6 +525,7 @@ after cooldown. It attracts baddies through gravity.")
   (:default-initargs
    :radius 10
    :defense 100
+   :density 1.2
    :color (make-color 98 255 85 75)
    :outline-color (make-color 98 255 85 255)
    :vertices (make-circle)
@@ -861,9 +876,13 @@ after cooldown. It attracts baddies through gravity.")
     ;; pause the game
     (#\p
      (setf (is-paused *program*) (not (is-paused *program*))))
+    (#\1
+     (setf *program* (level 1)))
+    (#\0
+     (setf *program* (level 0)))
     ;; reset the program (new game)
     (#\r
-     (setf *program* (level 1)))))                         
+     (setf *program* (level 0)))))                         
 
 (defun update-mouse (mouse x y &optional button state)
   ;; transmute coordinates
@@ -912,5 +931,5 @@ after cooldown. It attracts baddies through gravity.")
 			(goodies program) (list core))
 		  program)))))
 (defun main ()
-  (glut:display-window (make-instance 'my-window :program (setf *program* (level 1)))))
+  (glut:display-window (make-instance 'my-window :program (setf *program* (level 0)))))
 
