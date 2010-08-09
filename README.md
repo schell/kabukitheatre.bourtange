@@ -8,9 +8,9 @@ controls
 * p - pause the game  
 * 1 - restart game with core-blast  
 * 2 - restart game with decoy  
-* 3 - restart game with lifer  
-* 4 - restart game with repellor   
-
+* 3 - restart game with lifer 
+* 4 - restart game with repellor 
+* $ - give yourself more resources (cheat)
 * mouse click/move - buy cores and place them on the screen or buy weapons and place them on your cores   
 
 weapons
