@@ -22,7 +22,11 @@ Each weapon costs a different amount of resources, depending on how useful that 
 * lifer - The lifer gives its life to the core. Then it dies. Then it recharges. Then it gives life back to the core.  
 * repellor - The repellor acts as a gravity shield, it temporarily banishes incoming baddies to the nether regions of the screen.
 
+running
+-------
+sbcl --load start.lisp
 
+// i'm not sure how to do this in clisp
 
 
 HAPPY FUN TIME HACKING!
