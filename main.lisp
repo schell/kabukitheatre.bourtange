@@ -26,10 +26,16 @@
   "The end of the spawning belt. Baddies will not spawn this number past this.")
 (defparameter *boundary* *outer-spawning-radius*
   "The outer boundary of a game.")
-(defparameter *total-baddies* 50
+(defparameter *total-baddies* 10
   "The total number of baddies on the screen at any time.")
 (defparameter *core-size* 10
   "The radius of a core.")
+(defparameter *velocity-max* 300
+  "The max velocity along one axis")
+(defparameter *gravity-max* 25
+  "The max acceleration due to gravity")
+(defparameter *choosen-weapon* 1
+  "The current staring weapon")
 
 ;;;--------------------------------------
 ;;;  Some utility functions
@@ -69,6 +75,10 @@
   (:documentation "Adds to points together")
   (:method ((p1 point) (p2 point))
     (make-point (+ (x p1) (x p2)) (+ (y p1) (y p2)))))
+(defgeneric subt (p1 p2)
+  (:documentation "Subtracts one point from another")
+  (:method ((p1 point) (p2 point))
+    (make-point (- (x p1) (x p2)) (- (y p1) (y p2)))))
 (defun rad->xy (theta)
   "Utility function. Converts a radian measure to vector (list x y)"
   (make-point (cos theta) (sin theta)))
@@ -99,6 +109,10 @@
                  mag2)))
       (make-point (+ (x p1) (* u (- (x p2) (x p1))))
                   (+ (y p1) (* u (- (y p2) (y p1))))))))
+(defgeneric cross (p)
+  (:documentation "Returns a vector perpendicular to 'p")
+  (:method ((p point))
+    (make-point (- (y p)) (x p))))
 
 (defun make-square (half-width)
   "Utility function. Creates a list of 4 points arranged in a square"
@@ -202,13 +216,8 @@
 (defmethod collidedp ((o1 display-circle) (o2 display-circle))
   (let* ((combined-radii (+ (radius o1) (radius o2)))
          (broad-phase-hit (< (distance (origin o1) (origin o2)) combined-radii)))
-    (if (not broad-phase-hit)
-        (when (> (distance (last-origin o1) (origin o1)) (radius o2))
-          (let* ((closest-point (point-in-line-closest-to-point (last-origin o1) (origin o1) (origin o2))))
-            (return-from collidedp
-              (when (< (distance closest-point (origin o2)) (radius o2))
-                (list o1 o2)))))
-        (list o1 o2))))
+    (if broad-phase-hit 
+	(list o1 o2))))
 (defclass display-ring (display-circle)
   ((inner-radius :initarg :inner-radius :initform 100 :accessor inner-radius)
    (outer-radius :initarg :outer-radius :initform 100 :accessor outer-radius)))
@@ -258,6 +267,15 @@
   (:documentation "Applies the this's acceleration to its velocity, returns this")
   (:method ((this physical-object))
     (setf (velocity this) (add (velocity this) (acceleration this)))
+    ;; limit the velocity so things don't blow up
+    (with-slots (velocity)
+	this
+      (with-slots (x y)
+	  velocity
+	(if (> (abs x) *velocity-max*)
+	    (setf x (if (minusp x) (- *velocity-max*) *velocity-max*)))
+	(if (> (abs y) *velocity-max*)
+	    (setf y (if (minusp y) (- *velocity-max*) *velocity-max*)))))
     this))
 (defgeneric apply-all (this milliseconds)
   (:documentation "Applies acceleration and velocity to the this")
@@ -315,13 +333,16 @@
     (gl:scale scale scale 1)
     (draw-point-list  outline :line-strip color))
   (gl:load-identity))
+(defmethod collidedp ((this unit) (that unit))
+  "The two units must have defenses to collide"
+  (if (and (defense this) (defense that))
+      (call-next-method)))
 (defgeneric life-after-collision (this that)
   (:documentation "Returns the life of 'this after a collision with 'that")
   (:method ((this unit) (that unit))
     (let* ((life-this (life this))
            (percent (/ (strength that) (defense this))))
       (- life-this (* *tau* percent)))))
-
 ;;
 (defgeneric renew (this)
   (:documentation "Renews the unit")
@@ -329,7 +350,6 @@
     (setf (death-time this) nil
           (radius-at-death this) nil)
     this)) ; return this unit
-
 ;;
 (defgeneric explode (this)
   (:documentation "Explodes the unit")
@@ -342,7 +362,6 @@
           (radius this) (+ (radius-at-death this)
                            (* (explode-rate this) (death-time this))))
     this))
-
 ;;
 (defgeneric cooldown (this seconds)
   (:documentation "Cools the unit down by 'seconds")
@@ -355,7 +374,6 @@
         (renew this)
         ;; return the unit (renewed or not)
         (explode this))))
-
 ;;
 (defgeneric advance (this seconds)
   (:documentation "Steps the unit forward in time")
@@ -380,7 +398,6 @@
       (setf (life that) (life-after-collision that this)
             (life this) (life-after-collision this that)))
     (list this that)))
-
 ;;
 (defgeneric get-grav-force (m1 m2)
   (:documentation "Returns the gravitational force between 'm1 and 'm2")
@@ -388,8 +405,7 @@
     (let ((distance (distance (origin m1) (origin m2)))
           (mass1 (sphere-mass (radius m1) (density m1)))
           (mass2 (sphere-mass (radius m2) (density m2))))
-      (* *g* (/ (* mass1 mass2) (* distance distance))))))
-
+      (min *gravity-max* (* *g* (/ (* mass1 mass2) (* distance distance)))))))
 ;;
 (defgeneric get-grav-acceleration (m1 m2)
   (:documentation "Returns the gravitational acceleration from 'm1 to 'm2 as a vector")
@@ -399,10 +415,14 @@
                                          (origin m2)))))
       (make-point (* (x udv) force)
                   (* (y udv) force)))))
+;;
+(defmethod draw ((this unit))
+  (call-next-method))
 
 ;;
 (defclass baddy (unit)
-  ()
+  ((total-growth :initarg :total-growth :initform 1.0 :accessor total-growth)
+   (growth-rate :initarg :growth-rate :initform 0.1 :accessor growth-rate))
   (:default-initargs
    :radius 5
    :density .1
@@ -416,15 +436,27 @@
      for p = (multiply (rad->xy (random *tau*))
                        (+ inner-radius
                           (random (- outer-radius inner-radius))))
-     collect (make-instance baddy-type :origin p :last-origin p)))
+     collect (make-instance baddy-type :origin p :last-origin p
+			    :color (make-color 255 255 255 (* 255 (/ 0.1 2))))))
 ;;
 (defgeneric get-resources (this)
   (:documentation "Returns the worth of this baddy in resources.")
   (:method ((this baddy))
-    (* *tau* (* 1/100 (+ (strength this) (defense this))))))
+    (/ (+ (strength this) (defense this)) 20)))
 
 (defmethod renew ((this baddy))
-  (first (create-random-baddies 1 *outer-spawning-radius* *inner-spawning-radius*)))
+  (let* ((growth (random (total-growth this)))
+	(density (min (/ (random growth) 10) 2)))
+    (make-instance 'baddy
+		   :total-growth (+ (total-growth this) (growth-rate this))
+		   :radius (+ 5 growth)
+		   :density (+ 0.1 density)
+		   :color (make-color 255 255 255 (* 255 (/ density 2)))
+		   :strength (1+ growth)
+		   :defense (1+ growth)
+		   :origin (multiply (rad->xy (random *tau*))
+				     (+ *inner-spawning-radius*
+					(random (- *outer-spawning-radius* *inner-spawning-radius*)))))))
 ;;
 (defmethod advance ((this baddy) ms)
   (call-next-method))
@@ -463,6 +495,9 @@
 	  (core new-weapon) (core this)
           (ndx new-weapon) (ndx this))
     new-weapon))
+;;
+(defmethod draw ((this weapon))
+  (call-next-method))
 
 ;;
 (defclass core-blast (weapon)
@@ -472,7 +507,8 @@
   (:default-initargs
    :radius 10
    :density 0
-   :defense 5
+   :strength 2
+   :defense 8
    :cooldown-time 7
    :color (make-color 251 255 85 20)
    :outline-color (make-color 251 255 85)
@@ -488,34 +524,85 @@
                             (cooldown-time this)))))
   this)
 
-;; advance
+;;
 (defclass decoy (weapon)
-  ((velocity-magnitude :initarg :velocity-magnitude :initform nil :accessor velocity-magnitude)
-   (spiral-rate :initarg :spiral-rate :initform nil :accessor spiral-rate)
-   (spiral-time :initarg :spiral-time :initform nil :accessor spiral-time))
+  ()
   (:documentation "decoy is a planet that gets launched into space in a random direction
 after cooldown. It attracts baddies through gravity as it spirals outward.")
   (:default-initargs
-   :radius 40
+   :radius 26
    :density 0.5
-   :defense 2000
+   :defense 200
+   :strength 10
    :cooldown-time 5
-   :spiral-rate 1/2
-   :spiral-time 0
-   :velocity-magnitude 20
+   :velocity (make-point 500 0)
    :color (make-color 255 95 85 20)
    :outline-color (make-color 255 95 85)
    :vertices (make-circle)
    :outline (make-arc)))
 (defmethod advance ((this decoy) seconds)
   (call-next-method))
-(defmethod advance :before ((this decoy) seconds)
-  (let ((new-time (+ (spiral-time this) seconds))
-	(turn-time (/ 1 (spiral-rate this))))
-    (setf (spiral-time this) new-time)
-    (setf (acceleration this) (rad->xy new-time)))
-    this)
-  
+(defmethod advance :after ((this decoy) seconds)
+  ;; let it get out there
+  (let* ((normal (subt (origin this) (origin (core this))))
+	 (unit-normal (unitize normal))
+	 (outward-drift (multiply unit-normal 20))
+	 (tangent (cross normal))
+	 (unit-tan (unitize tangent))
+	 (spiral-drift (multiply unit-tan 100))
+	 (velocity (add outward-drift spiral-drift)))
+    (setf (velocity this) velocity))
+  this)
+
+;;
+(defclass lifer (weapon)
+  ((rate :initarg :rate :initform nil :accessor rate
+	 :documentation "how much life is gained in a second"))
+  (:documentation "lifer gives its life back to the core")
+  (:default-initargs
+   :radius 20
+   :density 0
+   :defense nil
+   :cooldown-time 7
+   :rate 1/14
+   :color (make-color 85 200 255 20)
+   :outline-color (make-color 85 200 255)
+   :vertices (make-circle)
+   :outline (make-arc)))
+(defmethod advance ((this lifer) seconds)
+  (setf (radius this) (cooldown-radius this))
+  (call-next-method))
+(defmethod advance :before ((this lifer) seconds)
+  (if (plusp (life this))
+      (let ((life-this-tick (* seconds (rate this) *tau*)))
+	(setf (life this) (- (life this) life-this-tick)
+	      (life (core this)) (min *tau* (+ (life (core this)) life-this-tick))))))
+
+;;
+(defclass repellor (weapon)
+  ((rate :initarg :rate :initform nil :accessor rate
+	 :documentation "pulse rate (just for show)"))
+  (:documentation "repellor repels baddies")
+  (:default-initargs
+   :radius 100
+   :density -.01
+   :defense nil
+   :cooldown-time 15
+   :rate 1/3
+   :color (make-color 195 85 255 20)
+   :outline-color (make-color 195 85 255)
+   :vertices (make-circle)
+   :outline (make-arc)))
+;;
+(defmethod advance ((this repellor) seconds)
+  (call-next-method))
+(defmethod advance :before ((this repellor) seconds)
+  (decf (life this) (* *tau* seconds (rate this)))
+  )
+;;
+(defmethod cooldown :after ((this repellor) seconds)
+  (setf (density this) 0))
+    
 ;;;
 ;;;      ()   ...the core
 ;;;
@@ -569,7 +656,7 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
 		       (point-size 5.0) 
 		       (point (make-point (+ point-size (- (/ *screen-width* 2))) (- (/ *screen-height* 2) point-size))))
   "Draws the amount of resources available to the screen"
-  (let* ((rows 12)
+  (let* ((rows 5)
          (rest-point-size (* point-size (- resources (floor resources))))
          (points (loop for x from 0 to (1- resources) collect
                       (make-point
@@ -614,13 +701,15 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
 (defclass weapon-store-item (unit)
   ((weapon-class :initarg :weapon-class :accessor weapon-class)
    (cost :initarg :cost :accessor cost)
+   (fee :initarg :fee :initform 0 :accessor fee)
    (background :initarg :background :initform (make-display-circle) :accessor background)))
 ;;
-(defun make-weapon-store-item (&key item cost)
+(defun make-weapon-store-item (&key item cost fee)
   (let ((wclass (make-instance item)))
     (make-instance 'weapon-store-item
       :weapon-class item
       :cost cost
+      :fee fee
       :vertices (vertices wclass)
       :outline (outline wclass)
       :radius 10
@@ -630,20 +719,31 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
 (defgeneric copy (this)
   (:documentation "Copies this item")
   (:method ((this weapon-store-item))
-    (make-weapon-store-item :item (weapon-class this) :cost (cost this))))
+    (make-weapon-store-item :item (weapon-class this) :cost (cost this) :fee (fee this))))
 
 ;;
 (defclass weapon-store (unit)
   ((weapons :initform (list
                        (make-weapon-store-item
                         :item 'core
-                        :cost 10)
+                        :cost 10
+			:fee 3)
                        (make-weapon-store-item
                         :item 'core-blast
-                        :cost 10)
+                        :cost 0.5
+			:fee 0.3)
 		       (make-weapon-store-item
 			:item 'decoy
-			:cost 10))
+			:cost 4
+			:fee 2)
+		       (make-weapon-store-item
+			:item 'lifer
+			:cost 10
+			:fee 3)
+		       (make-weapon-store-item
+			:item 'repellor
+			:cost 15
+			:fee 4))
             :accessor weapons))
   (:default-initargs :radius 100
     :death-time 0
@@ -689,6 +789,7 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
 (defun select-weapon (store mouse resources)
   (let ((weapon (car (collidedp store mouse))))
     (when (and weapon (<= (cost weapon) resources))
+      (incf (cost weapon) (fee weapon))
       (copy weapon))))
 ;;;  ._________.
 ;;;  | 1010101 |      the program...
@@ -700,7 +801,7 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
    (baddies :initform (create-random-baddies *total-baddies* *outer-spawning-radius* *inner-spawning-radius*) :accessor baddies)
    (goodies :initform nil :accessor goodies)
    (dying-bodies :initform () :accessor dying-bodies)
-   (resources :initform 100 :accessor resources)
+   (resources :initform 0 :accessor resources)
    (mouse :initform (make-instance 'mouse :radius 2 :vertices (make-circle)) :accessor mouse)
    (weapon-store :initform (make-instance 'weapon-store) :accessor weapon-store)
    (selected-weapon :initform nil :accessor selected-weapon)
@@ -753,11 +854,13 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
                       (select-weapon (weapon-store this) (mouse this) (resources this)))
             ;; deduct the cash
             (setf (resources this) (- (resources this) (cost (selected-weapon this)))))))
+
   ;; if the user has selected a weapon
   (when (selected-weapon this)
     (when (not (eql (weapon-class (selected-weapon this)) 'core))
-      (loop for x from 0 to (1- (length (goodies this))) do
-                                        ; find the core we're attaching the upgrade to
+      (loop for x from 0 to (1- (length (goodies this))) 
+	 do
+	 ;; find the core we're attaching the upgrade to
            (if (collidedp (nth x (goodies this)) (mouse this))
                (progn
                  (setf (selected-core this) (nth x (goodies this)))
@@ -790,6 +893,7 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
           ;; since we're probably testing a collision with a baddy and a core
           ;; collidedp returns a list of the baddy and the weapon (unit)
           ;; that the baddy collided with, that way we can damage the weapon
+	  ;; instead of just damaging the core itself
           do (apply #'collide collided)))
   ;; advance the baddies, dead baddies will be renewed in 'advance
   (setf (baddies this)
@@ -876,13 +980,25 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
     ;; pause the game
     (#\p
      (setf (is-paused *program*) (not (is-paused *program*))))
+    ;; reset with starting weapon
     (#\1
+     (setf *choosen-weapon* 1)
      (setf *program* (level 1)))
-    (#\0
-     (setf *program* (level 0)))
+    (#\2
+     (setf *choosen-weapon* 2)
+     (setf *program* (level 2)))
+    (#\3
+     (setf *choosen-weapon* 3)
+     (setf *program* (level 3)))
+    (#\4
+     (setf *choosen-weapon* 4)
+     (setf *program* (level 4)))
+    ;; give money (cheat)
+    (#\$
+     (incf (resources *program*)))
     ;; reset the program (new game)
     (#\r
-     (setf *program* (level 0)))))                         
+     (setf *program* (level *choosen-weapon*)))))                         
 
 (defun update-mouse (mouse x y &optional button state)
   ;; transmute coordinates
@@ -919,17 +1035,28 @@ after cooldown. It attracts baddies through gravity as it spirals outward.")
    (case number
      (1 (let* ((program (make-instance 'program))
 		       (core (make-instance 'core))
+		       (core-blast (make-instance 'core-blast :core core)))
+		  (setf (weapons core) (list core-blast)
+			(goodies program) (list core))
+		  program))
+     (2 (let* ((program (make-instance 'program))
+		       (core (make-instance 'core))
 		       (decoy (make-instance 'decoy :core core)))
 		  (setf (weapons core) (list decoy)
 			(goodies program) (list core))
 		  program))
-     ;; level 0
-     (otherwise (let* ((program (make-instance 'program))
+     (3 (let* ((program (make-instance 'program))
 		       (core (make-instance 'core))
-		       (core-blast (make-instance 'core-blast :core core)))
-		  (setf (weapons core) (list core-blast)
+		       (lifer (make-instance 'lifer :core core)))
+		  (setf (weapons core) (list lifer)
+			(goodies program) (list core))
+		  program))
+     (4 (let* ((program (make-instance 'program))
+		       (core (make-instance 'core))
+		       (repellor (make-instance 'repellor :core core)))
+		  (setf (weapons core) (list repellor)
 			(goodies program) (list core))
 		  program)))))
 (defun main ()
-  (glut:display-window (make-instance 'my-window :program (setf *program* (level 0)))))
+  (glut:display-window (make-instance 'my-window :program (setf *program* (level 1)))))
 
